@@ -1,0 +1,121 @@
+#!/bin/bash
+
+#----------------------------------------------------------------------------------
+#
+#   Проект: Молот [molot]
+# 
+#   Файл предназначен для управления контенерами 
+#   для сборки пакета Квас Про в среде разработке под Entware
+# 
+#   Запускается СНАРУЖИ контейнера для управления контейнирами сборки
+# 
+#   Автор       : Железа
+#   Email       : dev@zeleza.ru
+#   Лицензия    : Apache Версия 2.0
+#
+#   Создан      : 27 октября 2024 год
+#   Обновлен    : 30 октября 2024 год
+# 
+#----------------------------------------------------------------------------------
+
+# Включам режим вывода отладочных сообщений
+# set +xs
+
+# Включаем режим сборки BuildKit, чтобы можно было 
+# в режиме сборки контейнера передавать внутрь переменные из файла .env
+export DOCKER_BUILDKIT=1
+
+# Файл предназначен для сборки пакета Квас Про в среде разработке под Entware
+root_path=$(dirname $(readlink -f $0))
+env_file=${root_path}/.env
+
+
+DOCKERFILE_ENTWARE=${root_path}/docker/images/Dockerfile.entware
+USER_NAME=me
+APP_NAME=
+ENTWARE_ARCH=
+APP_ROOT=
+IMAGE_NAME='entware-builder'
+
+
+# Подключаем библиотеки с общими функциями
+source ${root_path}/libs/general
+source ${root_path}/libs/docker
+
+# Заполняем системыне переменные в файле .env
+[ -f "$env_file" ] && source $env_file
+if [[ ! -f "$env_file" || -z "$USER_NAME" ]] ; then 
+    error "Данные для сборки не заполнены."
+    warning "Отредактируйте файл ${BLUE}.env${NOCL}, заполнив в нем значения переменных"
+    pause "Для продолжения нажмите любую клавишу..."
+    set_env_file || exit 1
+
+fi
+
+clear && print_line
+
+# Если нет собранного Docker образа - собираем его
+docker image ls | grep -q "${IMAGE_NAME}" || {
+    clear && print_line
+    message "Запускаем сборку образа ${BLUE}${IMAGE_NAME}${NOCL} среды разработки под Entware"
+    print_line
+    warning "Сборка может занять от 20 минут и больше..."
+    print_line
+    docker build -f ${DOCKERFILE_ENTWARE} --build-arg USER_NAME=${USER_NAME} --pull --tag ${IMAGE_NAME} .
+    print_line
+}
+
+
+# Провеяем наличие контейнера и его статус для рекущей архитектуры ядра
+docker_container_name="entware-${ENTWARE_ARCH}-${APP_NAME}"
+# Проверяем существует ли докер-контейнер
+if docker ps -a | grep -q "${docker_container_name}" ; then 
+    
+    # Если контейнер до сих пор в статусе Created - удаляем его
+    docker ps -a | grep -q "${docker_container_name}" | grep -q "Created" && docker rm -f ${docker_container_name} &>/dev/null
+    
+    # Проверяем запущен ли докер-контейнер
+    if docker ps | grep -q "${docker_container_name}" ; then 
+        warning "Контейнер ${BLUE}${docker_container_name}${NOCL} уже запущен"
+        message "Заходим внутрь контейнера..."
+        print_line
+        # ...если нет, то заходим внутрь его
+        docker_exec ${docker_container_name} || exit 1
+    else
+        warning "Контейнер ${BLUE}${docker_container_name}${NOCL} НЕ запущен"
+        message "Производим запуск контейнера..."
+        print_line
+        # ...если нет, то запускаем его
+        if docker start ${docker_container_name} &>/dev/null ; then
+            # ...и затем заходим внутрь его
+            message "Заходим внутрь контейнера..."
+            print_line
+            docker_exec ${docker_container_name} || exit 1
+        else 
+            error "Возникла ошибка при старте контейнера ${BLUE}${docker_container_name}${NOCL}."
+            docker logs "${docker_container_name}"
+            exit 1
+        fi
+    fi
+
+
+else
+    
+    header "Создаем контейнер под именем ${BLUE}${docker_container_name}${NOCL}"
+    warning "Сборка может занять от 40 минут и больше..."
+    print_line
+
+    # Файл предназначен для сборки пакета Квас Про в среде разработке под Entware
+    molot_path=/home/${USER_NAME}/molot
+
+    docker run -it \
+        --mount type=bind,source=${APP_ROOT}/${APP_NAME},target=/home/${USER_NAME}/${APP_NAME} \
+        --mount type=bind,source=${root_path}/,target=${molot_path}/ \
+        --env-file ${env_file} \
+        --entrypoint ${molot_path}/docker/entrypoint \
+        --name ${docker_container_name} ${IMAGE_NAME} || {
+            error "Возникла ошибка при запуске контейнера ${BLUE}${docker_container_name}${NOCL}"
+            docker logs "${docker_container_name}"
+            exit 1
+    }
+fi

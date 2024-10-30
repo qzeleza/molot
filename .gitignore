@@ -1,0 +1,6 @@
+# Специфичиские пути
+.DS_Store
+.idea/
+.env
+.vscode
+TODO

@@ -1,0 +1,422 @@
+#!/bin/bash
+#----------------------------------------------------------------------------------
+#
+#   Проект: Молот [molot]
+# 
+#   Файл библиотекой функций для управления контейнерами 
+#   Подключается в файле build.me
+# 
+#   Автор       : Железа
+#   Email       : dev@zeleza.ru
+#   Лицензия    : Apache Версия 2.0
+#
+#   Создан      : 27 октября 2024 год
+#   Обновлен    : 30 октября 2024 год
+# 
+#----------------------------------------------------------------------------------
+
+# Включам режим вывода отладочных сообщений
+# set -x
+
+#----------------------------------------------------------------------------------
+# Пременная DEBUG - флаг для отладки: 
+# 	0 - выключено, 1 - включеноы
+# 	При включенном флаге вместо реальных 
+# 	функций сборки подключается библиотека отладки
+# 	в которой функции сборки выполненны в виде заглушек
+#----------------------------------------------------------------------------------
+DEBUG=0
+#----------------------------------------------------------------------------------
+
+# Имя файла для файла который хранит 
+# крайнюю стадию сборки, которая прошла успешно
+BUILDED_STAGES_FILE="${HOME}/${APP_NAME}/.stages"
+
+# Путь к entware
+ENTWARE_PATH=$HOME/entware
+
+# Массив функций стадий cборки
+STAGES_FUNC_NAME=(
+	stage1_clone_github_entware_repo
+	stage2_refresh_symlinks
+	stage3_make_menuconfig
+	stage4_build_toolchain
+	stage5_build_package
+	stage6_copy_package_to_project_dir
+	stage7_copy_package_to_router
+	stage8_install_and_start_package_on_router
+)
+
+# Подключаем библиотеку отладки 
+# Подключается обязательно после 
+# объявления массива STAGES_FUNC_NAME 
+[ ${DEBUG} -eq 1 ] && source ${HOME}/${APP_NAME}/molot/libs/debuger 
+
+
+# Определяем количество стадий по размеру массива
+TOTAL_STAGES=${#STAGES_FUNC_NAME[@]}
+
+# Функция для выполнения стадии с индекса start до end
+run_stages() {
+# set -xe
+    local _start=$1
+    local _end=$2
+    for (( i=_start; i<_end; i++ )); do
+        ${STAGES_FUNC_NAME[i]} || return 1
+    done
+}
+
+make_ssh_key() {
+
+	# Создаем публичный и приватный ключ
+	[ -f ${HOME}/.ssh/id_rsa.pub ] || {
+		[ -d ${HOME}/.ssh ] || sudo mkdir -p ${HOME}/.ssh
+		header "Создаем публичный и приватный ключи..."
+		sudo ssh-keygen -q -t rsa -b 4096 -f ${HOME}/.ssh/id_rsa -N "" || {
+			error "Возникла ошибка при создании ключей"
+			return 1
+		}
+	}
+	return 0
+}
+
+has_access_to_remote_host() {
+
+	# Проверка доступа по SSH
+	
+    local ssh_login="$1"
+    local port="$2"
+
+    # Проверка доступа по SSH
+	ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$port" "$ssh_login" "exit" &> /dev/null || {
+		return 1
+	}
+	return 0
+
+ 
+}
+
+copy_ssh_key() {
+
+    # проверяем доступость роутера 
+	local _host=$(echo "${1//root@/}" | tr -d ' ')
+	local _port="${2:-22}"
+
+    if is_host_available "${_host}" ; then
+		
+		# если нет доступа к роутеру, то копируем ключ на роутер
+		has_access_to_remote_host ${1} ${_port} || {
+			header "Роутер доступен, передаем публичный ключ на роутер..."
+			message "Когда запросят, введите пароль роутера:"
+			message "Публичный ключ: ${HOME}/.ssh/id_rsa.pub"
+			print_line
+			cat < ${HOME}/.ssh/id_rsa.pub
+			print_line
+			sudo ssh-copy-id -p ${_port} -i ${HOME}/.ssh/id_rsa.pub ${_host} || {
+				error "Возникла ошибка при передаче публичного ключа на роутер"
+			}
+		}
+  
+    else
+        error "Роутер недоступен по ${_host}"
+		return 1
+    fi
+	return 0
+}
+
+get_last_stage() {
+
+	# Получаем номер последней выполненной стадии сборки
+
+	local _start_stage
+
+	if [ -f "${BUILDED_STAGES_FILE}" ] ; then 
+		_start_stage=$(cat < ${BUILDED_STAGES_FILE})
+		[ -z "${_start_stage}" ] && _start_stage=0
+	else
+		touch "${BUILDED_STAGES_FILE}"
+		_start_stage=0
+	fi
+
+	echo ${_start_stage}
+
+}
+
+stage1_clone_github_entware_repo() {
+# set -x
+	# Первый этап сборки - клонирование репозитория
+	header "Клонируем среду разработки Entware из репозитория "
+
+	[ -d ${ENTWARE_PATH} ] && rm -rf ${ENTWARE_PATH}
+	# [ -d ${ENTWARE_PATH} ] && cd ${ENTWARE_PATH} #; make clean || true
+	mkdir -p ${ENTWARE_PATH} && cd ${HOME} &> /dev/null || true
+	git clone https://github.com/Entware/Entware.git ${ENTWARE_PATH} || {
+		error "[Стадия №1]: Возникла ошибка при клонировании репозитория Entware"
+		return 1
+	}
+	
+	# Фиксируем сборку первого этапа
+	echo 1 > "${BUILDED_STAGES_FILE}"
+
+	cd "${ENTWARE_PATH}" && return 0
+# set +x
+}
+
+stage2_refresh_symlinks() {
+	
+	# Второй этап сборки - обновление ссылок на источники пакетов
+	print_line
+	header "Обновляем ссылки на источники пакетов..."
+
+	# Обновляем ссылки на источники пакетов
+	cd ${ENTWARE_PATH} && git fetch	
+
+	# Собираем пакеты
+	${ENTWARE_PATH}/scripts/feeds update -a || {
+		error "[Стадия №2]: Возникла ошибка при обновлении ссылок на источники пакетов"
+		return 1
+	}
+
+	print_line
+	header "Устанавливаем источники пакетов..."
+
+	${ENTWARE_PATH}/scripts/feeds install -a || {
+		error "[Стадия №2]: Возникла ошибка при установке источников пакетов"
+		return 1
+	}
+	
+	print_line
+	header "Обновляем и устанавливаем источник для пакета ${BLUE}${APP_NAME}${NOCL}..."
+
+	{
+		grep -q ${APP_NAME} ${ENTWARE_PATH}/.feeds 2>/dev/null || echo "src-link ${APP_NAME} ${ENTWARE_PATH}/feeds/packages/${APP_NAME}" >> ${ENTWARE_PATH}/.feeds
+		ln -sf ${HOME}/${APP_NAME} ${ENTWARE_PATH}/feeds/packages/
+		${ENTWARE_PATH}/scripts/feeds update packages ${APP_NAME}
+		${ENTWARE_PATH}/scripts/feeds install -a ${APP_NAME}
+	} || {
+		error "[Стадия №2]: Возникла ошибка при установке источника для пакета ${BLUE}${APP_NAME}${NOCL}"
+		return 1
+	}
+
+	# make package/symlinks || {
+	# 	error "[Стадия №2]: Возникла ошибка при обновлении ссылок на источники пакетов"
+	# 	return 1
+	# }
+	
+	# Фиксируем сборку второго этапа
+	echo 2 > "${BUILDED_STAGES_FILE}"
+
+	return 0
+}
+
+stage3_make_menuconfig() {
+	
+	# Третий этап сборки - создание конфигурации
+	print_line
+	header "Создаем файл конфигурации под ${BLUE}${ENTWARE_ARCH}${NOCL}..."
+
+	# ln -sf "$HOME/${APP_NAME}" ${ENTWARE_PATH}/package/feeds/packages/
+	# Копируем конфигурацию для заданной архитектуры
+	cp -vf configs/${ENTWARE_ARCH}-*.config .config
+
+	# Собираем конфигурацию
+	make defconfig || {
+		error "[Стадия №3]: Возникла ошибка при сборке конфигурации"
+		return 1
+	}
+
+	# Фиксируем сборку третьего этапа
+	echo 3 > "${BUILDED_STAGES_FILE}"
+	
+	return 0
+}
+
+stage4_build_toolchain() {
+
+	# Четвертый этап сборки - сборка инструментария toolchain
+	clear && print_line
+	header "Запускаем сборку инструментария ${BLUE}toolchain${NOCL}"
+
+	make -j12 toolchain/install || {
+		error "[Стадия №4]: Возникла ошибка при сборке ${BLUE}toolchain${NOCL}"
+		make -j1 V=cs toolchain/install 
+		print_line
+		pause "Для продолжения нажмите клавишу Enter..."
+		return 1
+	}
+
+	# Фиксируем сборку четвертого этапа
+	echo 4 > "${BUILDED_STAGES_FILE}"
+
+	return 0
+}
+
+
+stage5_build_package() {
+
+	local answer="y"
+	message "Инструментарий ${BLUE}toolchain${NOCL} был собран успешно."
+	read_ynq "Запустить сборку пакета ${APP_NAME}?" answer
+	
+	# Выходим из скрипта если нажали отмену или нет
+	[[ "${answer}" = [NQ] ]] && return 1
+	[ "${answer}" = Y ] && {
+
+		# Пятый этап сборки - сборка пакета
+		clear && print_line
+		header "Запускаем сборку пакета ${BLUE}${APP_NAME}${NOCL}"
+
+		PATH=${ENTWARE_PATH}/build_dir/host/bin:$PATH
+		make -j12 package/${APP_NAME}/{clean,compile} || {
+			error "[Стадия №5]: Возникла ошибка при сборке пакета ${APP_NAME}"
+			make -j1 V=cs package/${APP_NAME}/compile 
+			print_line
+			pause "Для продолжения нажмите клавишу Enter..." 
+			return 1
+		}
+	}
+
+	return 0
+}
+
+stage6_copy_package_to_project_dir() {
+
+	print_line
+	header "Копируем собранный ipk пакет папку ${BLUE}${HOME}/${APP_NAME}/packages/${ENTWARE_ARCH}${NOCL}"
+
+	# Копируем собранный пакет в папку собранных пакетов
+    [ -d "${HOME}/${APP_NAME}/molot/${ENTWARE_ARCH}" ] || mkdir -p ${HOME}/${APP_NAME}/packages/${ENTWARE_ARCH}/
+
+	# Получаем имя архитектуры без префикса и суффикса
+	arch_conf=$(ls configs/aarch* | sed 's|.*/\(.*\)\..*$|\1|')
+
+    # Копируем в папку проекта собранный пакет
+    cp ${ENTWARE_PATH}/bin/targets/${arch_conf}/generic-glibc/packages/${APP_NAME}_*.ipk ${HOME}/${APP_NAME}/packages/${ENTWARE_ARCH}/ || {
+		error "[Стадия №6]: Возникла ошибка при передаче пакета на роутер"
+		return 1
+	}
+	return 0
+}
+
+stage7_copy_package_to_router() {
+    
+	# Копируем собранный пакет в папку собранных пакетов на удаленный роутер
+
+	# Проверка наличия публичного ключа внутри контейнера
+	make_ssh_key 
+	# Копируем публичный ключ на роутер
+	copy_ssh_key ${ROUTER_SSH} ${ROUTER_PORT}
+
+	# Проверяем доступность роутера 
+    if is_host_available "${ROUTER_SSH}" ; then
+        message "Роутер доступен, передаем пакет на роутер..."
+		ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "[ -d /opt/packages ] || mkdir -p /opt/packages/" &> /dev/null || {
+			error "[Стадия №7]: Возникла ошибка при создании директории /opt/packages на роутере"
+            return 1
+		}
+        scp -OP ${ROUTER_PORT} "${HOME}/${APP_NAME}/packages/${ENTWARE_ARCH}/${APP_NAME}_*.ipk" ${ROUTER_SSH}:/opt/packages/ || {
+            error "[Стадия №7]: Возникла ошибка при передаче пакета на роутер"
+            return 1
+        }
+    else
+        error "Роутер недоступен по адресу ${BLUE}${ROUTER_SSH//root@/}${NOCL}"
+        return 1
+    fi
+
+	return 0
+}
+
+
+stage8_install_and_start_package_on_router() {
+	
+	# Устанавливаем и запускаем приложение на удаленном роутере
+
+	clear && print_line
+	header "Выполняем установку пакета и запуск на роутере..."
+
+	ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "[ -f /opt/packages/${APP_NAME}_*.ipk ] && rm -f /opt/packages/${APP_NAME}_*.ipk && \
+		opkg remove ${APP_NAME} && opkg install /opt/packages/${APP_NAME}_*.ipk" || {
+		error "[Стадия №8]: Возникла ошибка при установке пакета на роутер ${BLUE}${ROUTER_SSH}${NOCL}"
+			return 1
+		}
+	ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "/opt/sbin/${APP_NAME}" || {
+		error "[Стадия №8]: Возникла ошибка при запуске приложения на роутер ${BLUE}${ROUTER_SSH}${NOCL}"
+		return 1
+		}
+	ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "/opt/sbin/test_${APP_NAME}" || {
+		error "[Стадия №8]: Возникла ошибка при запуске приложения на роутер ${BLUE}${ROUTER_SSH}${NOCL}"
+		return 1
+	}
+
+	return 0
+}
+
+
+hello() {
+	pause "Для продолжения нажмите клавишу Enter..."
+    clear
+    print_line
+    echo
+    echo -e "   🐳 Сейчас мы находимся внутри контейнера"
+    echo
+    echo -e "   ${BOLD}Пользователь${NOCL} : ${BLUE}${USER_NAME}${NOCL}"
+    echo -e "   ${BOLD}Приложение${NOCL}   : ${BLUE}${APP_NAME}${NOCL}"
+    echo -e "   ${BOLD}Архитектура${NOCL}  : ${BLUE}${ENTWARE_ARCH}${NOCL}"
+    echo -e
+	echo -e "   ${BOLD}Сборка${NOCL}       : ${GREEN}build <N>${NOCL}, где N - номер стадии сборки"
+    echo -e "   ${BOLD}Справка${NOCL}      : ${GREEN}help${NOCL}"
+    echo -e "   ${BOLD}Выход${NOCL}        : ${GREEN}exit${NOCL}"
+    echo
+    print_line
+}
+
+set_bashrc_profile(){
+#----------------------------------------------------------------------------------------------
+# 
+#   Устанавливаем данные при входе в сессию внутри контейнера
+# 
+#---------------------------------------------------------------------------------------------
+
+	(
+        # устанавливаем строку приглашения
+        printf "\n\nPS1=\"\n🐳 \w ✪❯ \"\n" 
+
+        printf 'export TERM=xterm-256color\n'
+		printf 'export EDITOR="/usr/bin/nano"\n'
+        printf "export LS_OPTIONS='--color=auto'\n";
+
+        printf "alias grep='grep --color=auto'\n";
+        printf "alias rm='rm -i'\n";
+        printf "alias cp='cp -i'\n";
+        printf "alias mv='mv -i'\n";
+        printf "alias ls='ls $LS_OPTIONS -GFh'\n";
+        printf "alias ll='ls $LS_OPTIONS -lai'\n";
+        printf "alias l='ls $LS_OPTIONS -lA'\n";
+        printf "alias nano='nano +999999 -l'\n";
+		printf "alias build='${HOME}/${APP_NAME}/molot/bin/insider'$@\n";
+
+		printf "help() {\n"
+		printf '    \n'
+		printf "    BLUE=\"\e[36m\" \n"
+		printf "    BOLD=\"\e[1m\"\n"
+		printf "    GREEN=\"\e[32m\"\n"
+		printf "    NOCL=\"\e[m\"\n"
+		printf '    \n'
+		printf "    while IFS= read -r line; do\n"
+		printf '	eval "echo -e \\"${line}\\""\n'
+		printf "    done < ${HOME}/${APP_NAME}/molot/config/help.me\n"
+		printf "}\n"
+
+        printf "[ -d ${ENTWARE_PATH} ] || mkdir -p ${ENTWARE_PATH} && cd ${ENTWARE_PATH}\n" 
+		printf "${HOME}/${APP_NAME}/molot/bin/insider\n"
+
+	) > ${HOME}/.bash_aliases || {
+		error "При записи данных в файл ${BLUE}${HOME}/.bash_aliases${NOCL} возникла ошибка."
+		return 1
+	}
+
+	return 0
+ 
+}
+
+

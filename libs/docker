@@ -1,0 +1,52 @@
+#!/bin/bash
+#----------------------------------------------------------------------------------
+#
+#   Проект: Молот [molot]
+# 
+#   Файл библиотекой функций для управления контейнерами 
+#   Подключается в файле build.me
+# 
+#   Автор       : Железа
+#   Email       : dev@zeleza.ru
+#   Лицензия    : Apache Версия 2.0
+#
+#   Создан      : 27 октября 2024 год
+#   Обновлен    : 30 октября 2024 год
+# 
+# 
+#----------------------------------------------------------------------------------
+
+set_env_file() {  
+
+	(
+		printf 'USER_NAME='
+		printf 'APP_NAME=kvaspro'
+		printf 'ENTWARE_ARCH=aarch64'
+		printf 'ROUTER_SSH=root@'	
+		printf 'ROUTER_PORT=22'
+		printf 'APP_ROOT=/opt'
+		printf 'IMAGE_NAME=entware-builder'
+
+	) > "${env_file}" 
+    nano ${env_file} && {
+        source ${env_file}
+        [ -z "${USER_NAME}" ] && {
+            error "Данные не заполены - отредактируйте файл ${env_file}."
+            return 1
+        }
+    }
+	return 0
+}
+
+
+docker_exec() {
+	#  Входим внутрь уже запущенного докер-контейнера
+    local _container_name=$1
+	
+	docker exec -it "${_container_name}" /bin/bash || {
+		error "Возникла ошибка при входе в контейнер ${BLUE}${_container_name}${NOCL}"
+		docker logs "${_container_name}"
+		return 1
+	}
+	print_line && return 0
+}
