@@ -106,3 +106,62 @@ read_ynq() {
 		esac
 	done
 }
+
+install_missing_packages() {
+#------------------------------------------------------------------------------------------
+# 
+# 	Функция для проверки наличия команд и установки недостающих пакетов
+# 	Аругуметы:
+# 		$1 - массив с именами пакетов и командой установки, которые необходимо проверить и установить
+# 			см. пример ниже, если пакет устанавливается системой, то  команда установки равна "apt"
+# 
+# 	Пример использования функции
+# 		packages_to_check=(
+# 				"docker" "curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh && sudo chmod 666 /var/run/docker.sock" 
+# 				"mc" "apt"
+# 				"htop" "apt") 
+# 		install_missing_packages commands_to_check
+# 
+#------------------------------------------------------------------------------------------
+install_missing_packages() {
+
+    local -n package_list=$1   # Разыменовываем массив по ссылке
+    local to_install_apt=""    # Переменная для накопления пакетов apt
+    local custom_install_cmd="" # Переменная для команд не через apt
+
+    # Цикл проверки каждого пакета
+    for ((i = 0; i < ${#package_list[@]}; i+=2)); do
+        local pkg_name="${package_list[i]}"         # Имя пакета
+        local install_cmd="${package_list[i+1]}"    # Команда установки
+
+		# Проверяем наличие пакета в системе
+        command -v "$pkg_name" &> /dev/null || {
+            # Проверяем, какая команда установки указана
+            if [[ "$install_cmd" == "apt" ]]; then
+                to_install_apt+="$pkg_name "
+            else
+                custom_install_cmd+="$install_cmd install $pkg_name && "
+            fi
+		}
+
+    done
+
+    # Установка всех недостающих пакетов через apt
+    if [ -n "$to_install_apt" ]; then
+		print_line
+        header "Устанавливаем недостающие пакеты через apt: $to_install_apt"
+        sudo apt update && sudo apt install -y $to_install_apt || return 1
+    fi
+
+    # Выполняем кастомные команды для установки
+    if [ -n "$custom_install_cmd" ]; then
+		print_line
+        header "Устанавливаем недостающие пакеты через скрипты:"
+        eval "${custom_install_cmd%&& }"  || return 1
+    fi
+
+	return 0
+}
+
+
+

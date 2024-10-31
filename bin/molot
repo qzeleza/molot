@@ -26,7 +26,7 @@
 export DOCKER_BUILDKIT=1
 
 # Файл предназначен для сборки пакета Квас Про в среде разработке под Entware
-root_path=$(dirname $(readlink -f $0))
+root_path=$(dirname $(dirname $(readlink -f $0)))
 env_file=${root_path}/.env
 
 
@@ -40,8 +40,14 @@ IMAGE_NAME='entware-builder'
 
 # Подключаем библиотеки с общими функциями
 source ${root_path}/libs/general
+source ${root_path}/libs/dialogs 
 source ${root_path}/libs/docker
 
+
+# Основной запуск
+select_project
+
+exit 
 # Заполняем системыне переменные в файле .env
 [ -f "$env_file" ] && source $env_file
 if [[ ! -f "$env_file" || -z "$USER_NAME" ]] ; then 

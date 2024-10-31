@@ -10,13 +10,36 @@
 #   Лицензия    : Apache Версия 2.0
 #
 #   Создан      : 27 октября 2024 год
-#   Обновлен    : 30 октября 2024 год
+#   Обновлен    : 31 октября 2024 год
 # 
 #----------------------------------------------------------------------------------
 
+# Устаналиваем пакет в текуую папку
 {
-    git https://github.com/qzeleza/molot.git
+    git https://github.com/qzeleza/molot.git &>/dev/null
     install_path=$(dirname $(readlink -f $0))
-    echo 'alias molot="'${install_path}/molot/bin/molot'"' >> ~/.bash_aliases
-    sources ~/.bash_aliases 
-} && echo "Пакет Молот успешно установлен" || echo "Пакет Молот не установлен из-за возникших ошибок."
+    ln -s /bin/molot ${install_path}/molot/bin/molot 
+} || {
+    error "При клонировани пакета Молот возникли ошибки."
+    exit 1
+}
+
+# Подключаем библиотеку общих функций
+source ./molot/libs/general
+
+# Массив необходимых пакетов с командами их установки 
+commands_to_check=(
+    "docker" "curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh && sudo chmod 666 /var/run/docker.sock" 
+    "git"    "apt"
+    "scp"    "apt"
+)  
+# Проверяем и устанавливаем недостающие пакеты
+install_missing_packages commands_to_check || {
+    error "Были установлены не все необходимые."
+    exit 1
+}
+
+print_line
+allright "Пакет Молот успешно установлен." 
+warning  "Для запуска процесса сборки запустите команду ${BLUE}molot${NOCL}"
+print_line
