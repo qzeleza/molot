@@ -24,6 +24,109 @@ GREEN="\e[32m"               # темно зеленый цвет текста
 NOCL="\e[m"                  # возвращает текст к настройкам по умолчанию.
 
 
+# Проверяем есть ли пакет в системе
+available() { command -v $1 >/dev/null; }
+
+#---------------------------------------------------------------------------------
+# 
+#   Функция  Проверяет есть ли элеимент внутри массива?
+# 
+#   Аргументы:
+#       $1 - array: массив.
+#       $2 - element: строка или цифра которую ищем.
+# 
+#  Применение:
+# 	array=("22" "gdff" "name")
+# 	contains_element array name
+# 
+#---------------------------------------------------------------------------------
+contains_element() {
+
+    local -n array=$1
+    local element=$2
+
+    for item in "${array[@]}"; do
+        if [[ "$item" == $element ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+#---------------------------------------------------------------------------------
+# 
+#   Функция find_index_in_array ищет значение в массиве и возвращает найденный 
+#   инжекс элемент массива, начиная с 0, если не найдено, то возвращаем  -1.
+# 
+#   Аргументы:
+#      $1 - array: Массив, в котором производится поиск, передаем по ссылке.
+#      $2 - search_value: Значение, которое нужно найти в массиве.
+# 
+#   Возвращаемое значение:
+#       Соответствующий элемент массива с заданным сдвигом, 
+#       если значение найдено; в противном случае - "-1".
+# 
+#   Использование: 
+#       array=(1 "ddd" 0
+#              2 "sss" 0)
+#       find_index_in_array array sss 
+#       -> вернет 4
+# 
+#---------------------------------------------------------------------------------
+find_index_in_array() {
+
+    local  search_value ncols shift_out result
+    local -n array="$1"
+    search_value="${2}"
+    result=-1
+
+    #  цикл по массиву
+    for ((i=0; i<${#array[@]}; i++)); do
+        if [[ "${array[i]//$search_value/}" != ${array[i]} ]]; then
+            # Если нашли, то возвращаем 
+            # результат с заданным сдвигом в столбце
+            result="${i}"
+            break
+        fi
+    done
+
+    # возвращаем результат поиска
+    echo "${result}"
+}
+
+# возвращает максимальное из двух чисел
+max() {
+    (( $1 > $2 )) && echo "$1" || echo "$2"
+}
+
+# Функция генерирует случайное число от min до max
+#	$1 - min, по умолчанию 0
+#   $2 - max, по умолчанию 1
+
+random(){
+
+	local _min=${1:-0}
+	local _max=${2:-1}
+
+	echo $((RANDOM % (_max - _min + 1) + _min))
+}
+
+# Функция доплняет пробелами текстовую стороку до заданной ширины строки
+#	$1 - строка, которую нужно увеличить пробелами
+#   $2 - необходимая ширина новой строки
+fill_str(){
+	local _text=${1}
+	local _width=${2}
+	
+	local _charlen=$(echo "${_text}" | sed -r "s/[\]033\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g")
+	_charlen=${#_charlen}
+
+	size=$(( _width - _charlen ))
+	printf "%b%-${size}s%b" "${_text}"
+}
+
+
 pause(){
 	# просто выводим сообщение и ждем нажатия любой клавиши 
 	[ -n "$1" ] && {
@@ -34,49 +137,49 @@ pause(){
 }
 
 
-print_line() {
+print_line(){
 	# функция печатает заданное число раз один и тот же символ
 	len=$((LENGTH))
 	printf "%${len}s\n" | tr " " "-"
 }
 
-message() {
+message(){
 	# Выводит простое сообщение
-	echo -e "${1}"
+	echo -e " ${1}"
 }
 
-header() {
+header(){
 	# Выводит заголовок
 	# print_line
-	echo -e "${GREEN}${BOLD}${1}${NOCL}"
+	echo -e " ${GREEN}${BOLD}${1}${NOCL}"
 	print_line
 }
 
-allright() {
+allright(){
 	# Выводит если все хорошо
-	echo -e "${GREEN}${BOLD}${1}${NOCL}"
+	echo -e " ${GREEN}${BOLD}${1}${NOCL}"
 }
 
-error() {
+error(){
 	# Выводит сообщение об ошибке
     print_line
-    echo -e "${RED}${BOLD}${1}${NOCL}"
+    echo -e " ${RED}${BOLD}${1}${NOCL}"
     print_line
 }
 
-warning() {
+warning(){
 	# Выводит предупреждение
-	echo -e "${YELLOW}${BOLD}${1}${NOCL}"
+	echo -e " ${YELLOW}${BOLD}${1}${NOCL}"
 }
 
-is_host_available() {
+is_host_available(){
 	# Проверяем доступность хоста
     local _host="${1//root@/}"
     ping -c 2 -W 2 "${_host// /}"  &>/dev/null
 }
 
 
-read_ynq() {
+read_ynq(){
 # ------------------------------------------------------------------------------------------
 #
 #	 Читаем Y/N/Q из ввода данных в цикле
@@ -107,7 +210,6 @@ read_ynq() {
 	done
 }
 
-install_missing_packages() {
 #------------------------------------------------------------------------------------------
 # 
 # 	Функция для проверки наличия команд и установки недостающих пакетов
@@ -135,7 +237,7 @@ install_missing_packages() {
         local install_cmd="${package_list[i+1]}"    # Команда установки
 
 		# Проверяем наличие пакета в системе
-        command -v "$pkg_name" &> /dev/null || {
+        available "$pkg_name" || {
             # Проверяем, какая команда установки указана
             if [[ "$install_cmd" == "apt" ]]; then
                 to_install_apt+="$pkg_name "
@@ -163,5 +265,127 @@ install_missing_packages() {
 	return 0
 }
 
+highlight_words_to_multy_colors() {
+    set -x 
+    # Первый аргумент - ссылка на массив: 
+    # 1 колонка - строка со словами для окрашивания 
+    # 2 колонка - код цвета
+    local -n words_ref="$1"  
+    # Второй аргумент - путь к файлу
+    local file="$2"    
+    
+    # Проверяем существование файла
+    if [ ! -f "$file" ]; then
+        echo "Файл не найден: $file"
+        return 1
+    fi
+
+    # Проверяем, является ли первый аргумент массивом
+    if ! declare -p "$1" &>/dev/null; then
+        echo "Первый аргумент должен быть массивом"
+        return 1
+    fi
+
+    # Создаем временную копию содержимого файла
+    local content=$(cat "$file")
+    local _nocl=$(echo "${NOCL}" | sed 's|\e|\\\\e|g')
+    
+    # Проходим по массиву с шагом 1 (для обработки пар значений)
+    local len=${#words_ref[@]}
+
+    for ((i=0; i<len; i+=2)); do
+        local words_string="${words_ref[i]}"
+        local color="${words_ref[i+1]}"  # Исправлено
+        
+        # Разбиваем строку на отдельные слова
+        read -ra words <<< "$words_string"
+        
+        # Создаем регулярное выражение для группы слов
+        local regex=""
+        for word in "${words[@]}"; do
+            if [ -n "$regex" ]; then
+                regex="$regex|"
+            fi
+            regex="${regex}$word"
+        done
+        
+        # Заменяем каждое вхождение слов на версию с цветом
+        local color_code=$(echo "${color}" | sed 's|\e|\\\\e|g')
+        content=$(echo -e "$content" | sed -E "s/\b($regex)\b/${color_code}&\\\e[m/g")
+    done
+    
+    # Выводим результат
+    printf "%b\n" "${content}"
+}
 
 
+
+_highlight_words_to_multy_colors() {
+
+# находим в файле слова и окрашиваем их каждое слово заданным цветом 
+
+	# Первый аргумент - ссылка на массив: 
+    # 1 колонка - слово для окрашивания 
+	# 2 колонка - код цвета
+	local -n words_ref="$1"  
+	# Второй аргумент - путь к файлу
+	local file="$2"    
+    
+    # Проверяем существование файла
+    if [ ! -f "$file" ]; then
+        echo "Файл не найден: $file"
+        return 1
+    fi
+
+    # Создаем временную копию содержимого файла
+    local content=$(cat "$file")
+	local _nocl=$(echo "${NOCL}" | sed 's|\e|\\\\e|g')
+
+    # Проходим по массиву с шагом 2 (для обработки пар значений)
+    local len=${#words_ref[@]}
+    for ((i=0; i<len; i+=2)); do
+        local word="${words_ref[i]}"
+        local color=$(echo "${words_ref[i+1]}" | sed 's|\e|\\\\e|g')
+        # Заменяем каждое вхождение слова на версию с цветом
+         content=$(echo -e "$content" | sed -E "s|\b($word)\b|${color}\1${_nocl}|g")
+    done
+    
+    # Выводим результат
+    printf "%b\n" "${content}"
+}
+
+highlight_words_to_one_color() {
+
+# находим в файле слова и окрашиваем их одним заданным цветом 
+
+    local -n _words=$1       			# массив слов для поиска
+    local _file="$2"         			# Первый аргумент - путь к файлу
+	local _color_code=${3:-${BLUE}}		# Цвет окраски
+
+	_color_code=$(echo "${_color_code}" | sed 's|\e|\\\\e|g')
+	local _nocl=$(echo "${NOCL}" | sed 's|\e|\\\\e|g')
+
+    # Проверяем существование файла
+    if [ ! -f "$_file" ]; then
+        error "Файл не найден: $_file"
+        return 1
+    fi 
+	if ! declare -p "$1" &>/dev/null; then
+		echo "Первый аргумент должен быть массивом"
+		return 1
+	fi
+
+    # Создаем временную копию содержимого файла
+    local content=$(cat "$_file")
+    
+    # Проходим по каждому слову в массиве
+    for word in "${_words[@]}"; do
+        # Заменяем каждое вхождение слова на версию с цветом
+        # -E для поддержки регулярных выражений
+        # \b для поиска целых слов
+        content=$(echo -e "$content" | sed -E "s|\b($word)\b|${_color_code}\1${_nocl}|g")
+    done
+    
+    # Выводим результат
+	printf "%b\n" "${content}"
+}

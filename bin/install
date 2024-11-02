@@ -26,10 +26,12 @@
 
 # Подключаем библиотеку общих функций
 source ./molot/libs/general
+source ./molot/libs/dialogs
+source ./molot/libs/setup
 
 # Массив необходимых пакетов с командами их установки 
 commands_to_check=(
-    "docker" "curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh && sudo chmod 666 /var/run/docker.sock" 
+    "docker" "sudo curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh && sudo chmod 666 /var/run/docker.sock" 
     "git"    "apt"
     "scp"    "apt"
 )  
@@ -38,6 +40,8 @@ install_missing_packages commands_to_check || {
     error "Были установлены не все необходимые."
     exit 1
 }
+
+install_ollama_ai
 
 print_line
 allright "Пакет Молот успешно установлен." 

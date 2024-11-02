@@ -1,0 +1,2 @@
+REPO_URL=https://bitbucket.org/padavan/rt-n56u.git
+PROCS=(aarch64 mips mipsel)

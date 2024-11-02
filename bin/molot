@@ -19,87 +19,233 @@
 #----------------------------------------------------------------------------------
 
 # Включам режим вывода отладочных сообщений
-# set +xs
+# set -xe
 
 # Включаем режим сборки BuildKit, чтобы можно было 
 # в режиме сборки контейнера передавать внутрь переменные из файла .env
 export DOCKER_BUILDKIT=1
 
 # Файл предназначен для сборки пакета Квас Про в среде разработке под Entware
-root_path=$(dirname $(dirname $(readlink -f $0)))
-env_file=${root_path}/.env
-
-
-DOCKERFILE_ENTWARE=${root_path}/docker/images/Dockerfile.entware
-USER_NAME=me
-APP_NAME=
-ENTWARE_ARCH=
-APP_ROOT=
-IMAGE_NAME='entware-builder'
-
+ROOT_PATH=$(dirname $(dirname $(readlink -f $0)))
 
 # Подключаем библиотеки с общими функциями
-source ${root_path}/libs/general
-source ${root_path}/libs/dialogs 
-source ${root_path}/libs/docker
+source ${ROOT_PATH}/libs/general
+source ${ROOT_PATH}/libs/dialogs 
+source ${ROOT_PATH}/libs/docker
+
+# Получаем данные о средах разработки по имени папок 
+# в папке конфигурации и формируем ENV_ITEMS
+create_env_items_array "${IMAGES_CONFIG_PATH}" ENV_ITEMS
+
+_arg1_command=${1}
+_arg2_app_name=${2}
+_arg3_env_name=${3}
+_arg4_arch_name=${4}
 
 
-# Основной запуск
-select_project
+# Обрабатываем входящие аргументы 
+case "${_arg1_command}" in
 
-exit 
-# Заполняем системыне переменные в файле .env
-[ -f "$env_file" ] && source $env_file
-if [[ ! -f "$env_file" || -z "$USER_NAME" ]] ; then 
-    error "Данные для сборки не заполнены."
-    warning "Отредактируйте файл ${BLUE}.env${NOCL}, заполнив в нем значения переменных"
-    pause "Для продолжения нажмите любую клавишу..."
-    set_env_file || exit 1
+    # производим запуск по заданным параметрам проекта 
+    # Имени проекта ($2) 
+    # Среда сборки  ($3)
+    # Архитектура   ($4)
+    run|build) 
+        [[ -n "${_arg2_app_name}" &&  -n "${_arg3_env_name}" &&  -n "${_arg4_arch_name}" ]] && {
+            check_project_name "${_arg2_app_name}" 
+            contains_element ENV_ITEMS "${_arg3_env_name}" || {
+                show_error_dialog "Заданная среда сборки \Zb\Z1${_arg3_env_name}\Zn не поддерживается Молотом"
+                exit 1
+            }
+            contains_element ARCH_ITEMS "${_arg4_arch_name}"  || {
+                show_error_dialog "Заданная архитектура сборки \Zb\Z1${_arg4_arch_name}\Zn не поддерживается Молотом"
+                exit 1
+            }
+        }
+        ;;
 
-fi
+    # производим поиск по заданному имени проекта ($2) 
+    search) 
+        if [[ -n "${_arg2_app_name}" ]] ; then 
+            search_project "${_arg2_app_name}" "/" || {
+                [[ -z "${_arg2_app_name}" ]] && show_error_dialog "Не задано имя проекта!"
+                exit 1
+            }
+        fi 
+        ;; 
+    
+    # клонируем репозиторий: $1 - ссылка, $2 - путь установки
+    clone)  
+        _git_url=${_arg2_app_name}; _install_path=${_arg3_env_name};
+        [[ -n "${_git_url}" && -n "${_install_path}" ]] && clone_project "${_git_url}" "${_install_path}" || {
+            show_error_dialog "Не заданы ссылка на репозиторий и/или путь для установки!"
+            exit 1
+        }
+        ;;  
+    
+    # выбираем среду сборки по заданному имени проекта ($2)
+    env)    
+        [[ -n "${_arg2_app_name}" ]] && choose_build_environment "${_arg2_app_name}" || {
+            show_error_dialog "Не задано имя проекта!"
+            exit 1
+        }
+        ;;
 
-clear && print_line
+    # выбираем архитектуру разработки для указнному имени проекта ($2)
+    # и по заданному имени среды разработки ($3)
+    arch ) 
+        [[ -n "${_arg2_app_name}" && -n "${_arg3_env_name}" ]] && choose_architecture "${_arg2_app_name}" "${_arg3_env_name}" || {
+            show_error_dialog "Не заданы имя проекта и/или код среды разработки: arch64|mips|mipsel"
+            exit 1
+        }
+        ;;
+
+    # Удаляем приложение Молот
+    remove|uninstall)
+        source ${ROOT_PATH}/libs/setup
+        remove_molot
+        exit 1
+        ;;    
+
+    # Если ничего не задано, то продолжаем дальше выполнение скрирпта
+    help)
+        words=(
+            "Молот" "entware" "openwrt"  "podavan" "aarch64" "mips" "mipsel" 
+            "molot" "run" "search" "clone" "env" "arch" "remove" "help" 
+        )
+        # words=(
+        #     "Молот entware openwrt podavan aarch64 mips mipsel" "${BLUE}"
+        #     "molot run search clone env arch remove help" "${GREEN}" 
+        # )
+
+        highlight_words_to_one_color words "${MOLOT_CONFIG_PATH}/molot.help" "${BLUE}"  
+        echo 
+        exit 1
+        ;;
+
+    # Если ничего не задано, то продолжаем дальше выполнение скрирпта
+    "")
+        ;;
+
+    *) 
+        help_text=$(cat < "${MOLOT_CONFIG_PATH}/help" \
+            | grep 'Команды для запуска Молота:' -A 999999 \
+            | sed '/help.*/d;/----$/d;s|\(.*<.*>\)\(.*-.*$\)|\\\Z4\1\\\Zn\2|g' \
+            | sed ':a;N;$!ba;s/\n/\\n/g; /^$/d;' )
+        show_error_dialog "\Z1Введена не известная команда \Zb\Z4${1}\Zn\n\n${help_text}" 
+        exit 1
+    ;;
+esac
+
+# Проверяем, был ли ранее уже создан файл .env и заполнен ли он
+if [[ -f "${ENV_FILE}" && -s "${ENV_FILE}" ]] ; then 
+
+    # Подгружаем данные из файла
+    source "${ENV_FILE}" 
+
+    # формируем сообщение для запроса
+    mess=$(cat <<-EOF
+        Найдена ранее сохраненная кофигурация
+
+        Проект       : \Z4${APP_NAME}\Zn
+        Папка        : \Z4${APP_ROOT}\Zn
+        Среда сборки : \Z4${BUILDING_ENV}\Zn
+        Архитектура  : \Z4${BUILDING_ARCH}\Zn
+
+        \Z1Продолжить с данной конфигурацией?\Zn
+EOF
+)
+    YesButtonText=Продолжить; NoButtonText="Выбрать другую"
+	# Выводим диалог с запросом на удаление
+	answer=$(show_yes_no_dialog "${mess}")
+    
+	# Если подтвердили удаление
+	if is_cancel_pressed "${answer}" ; then
+        # Переходим к процедуре выбора конфигурации проекта 
+        select_project
+    fi
+    # Восстанавливаем текст кнопки
+    NoButtonText=Нет; YesButtonText=Да  
+
+else
+    # Если файл .env отсуствует или не был ранее заполнен
+    # то переходим к процедуре выбора конфигурации проекта 
+    select_project
+fi 
+
+# Подгружаем данные из файла
+source "${ENV_FILE}" 
+source "${IMAGES_CONFIG_PATH}/${BUILDING_ENV}/config"
+
+clear 
+# clear && print_line
 
 # Если нет собранного Docker образа - собираем его
 docker image ls | grep -q "${IMAGE_NAME}" || {
-    clear && print_line
-    message "Запускаем сборку образа ${BLUE}${IMAGE_NAME}${NOCL} среды разработки под Entware"
+    clear 
     print_line
-    warning "Сборка может занять от 20 минут и больше..."
+    echo 
+    allright " Текущая конфигурация сборки ${BLUE}Молота"
+    echo 
+    message " Приложение     : ${BLUE}${APP_NAME}${NOCL}"
+    message " Среда сборки   : ${BLUE}${BUILDING_ENV}${NOCL}"
+    message " Архитектура    : ${BLUE}${BUILDING_ARCH}${NOCL}"
+    message " Имя образа     : ${BLUE}${IMAGE_NAME}${NOCL}"
+    message " Имя контейнера : ${BLUE}${CONTAINER_NAME}${NOCL}"
+    echo
     print_line
-    docker build -f ${DOCKERFILE_ENTWARE} --build-arg USER_NAME=${USER_NAME} --pull --tag ${IMAGE_NAME} .
+    warning " Запускаем сборку образа в работу..."
+    warning " Сборка может занять от 20 минут и больше..."
+    print_line
+
+    docker build -f $(get_dockerfile_name ${BUILDING_ENV}) --build-arg USER_NAME=${USER_NAME} --pull --tag ${IMAGE_NAME} . || {
+        error "Возникла ошибка при сборке образа ${BLUE}${IMAGE_NAME}${NOCL}."
+        exit 1
+    }
     print_line
 }
 
-
-# Провеяем наличие контейнера и его статус для рекущей архитектуры ядра
-docker_container_name="entware-${ENTWARE_ARCH}-${APP_NAME}"
+# Проверяем наличие контейнера и его статус для рекущей архитектуры ядра
 # Проверяем существует ли докер-контейнер
-if docker ps -a | grep -q "${docker_container_name}" ; then 
+if docker ps -a | grep -q "${CONTAINER_NAME}" ; then 
     
     # Если контейнер до сих пор в статусе Created - удаляем его
-    docker ps -a | grep -q "${docker_container_name}" | grep -q "Created" && docker rm -f ${docker_container_name} &>/dev/null
+    docker ps -a | grep -q "${CONTAINER_NAME}" | grep -q "Created" && docker rm -f ${CONTAINER_NAME} &>/dev/null
     
     # Проверяем запущен ли докер-контейнер
-    if docker ps | grep -q "${docker_container_name}" ; then 
-        warning "Контейнер ${BLUE}${docker_container_name}${NOCL} уже запущен"
+    if docker ps | grep -q "${CONTAINER_NAME}" ; then 
+        warning "Контейнер ${BLUE}${CONTAINER_NAME}${NOCL} уже запущен"
         message "Заходим внутрь контейнера..."
+
         print_line
         # ...если нет, то заходим внутрь его
-        docker_exec ${docker_container_name} || exit 1
+        docker_exec ${CONTAINER_NAME} || {
+            error "Возникла ошибка при входе в контейнер ${BLUE}${CONTAINER_NAME}${NOCL}."
+            docker logs "${CONTAINER_NAME}"
+            print_line
+            exit 1
+        }
     else
-        warning "Контейнер ${BLUE}${docker_container_name}${NOCL} НЕ запущен"
+        warning "Контейнер ${BLUE}${CONTAINER_NAME}${NOCL} НЕ запущен"
         message "Производим запуск контейнера..."
         print_line
+
         # ...если нет, то запускаем его
-        if docker start ${docker_container_name} &>/dev/null ; then
+        if docker start ${CONTAINER_NAME} &>/dev/null ; then
             # ...и затем заходим внутрь его
             message "Заходим внутрь контейнера..."
             print_line
-            docker_exec ${docker_container_name} || exit 1
+            
+            docker_exec ${CONTAINER_NAME} || {
+                error "Возникла ошибка при входе в контейнер ${BLUE}${CONTAINER_NAME}${NOCL}."
+                docker logs "${CONTAINER_NAME}"
+                print_line
+                exit 1
+            }
         else 
-            error "Возникла ошибка при старте контейнера ${BLUE}${docker_container_name}${NOCL}."
-            docker logs "${docker_container_name}"
+            error "Возникла ошибка при старте контейнера ${BLUE}${CONTAINER_NAME}${NOCL}."
+            docker logs "${CONTAINER_NAME}"
+            print_line
             exit 1
         fi
     fi
@@ -107,21 +253,11 @@ if docker ps -a | grep -q "${docker_container_name}" ; then
 
 else
     
-    header "Создаем контейнер под именем ${BLUE}${docker_container_name}${NOCL}"
-    warning "Сборка может занять от 40 минут и больше..."
+    header "Создаем контейнер под именем ${BLUE}${CONTAINER_NAME}${NOCL}"
+    warning "[ВНИМАНИЕ] Сборка может занять от 40 минут и больше..."
     print_line
+    # первый запуск контейнера и его создание 
+    create_docker_container
 
-    # Файл предназначен для сборки пакета Квас Про в среде разработке под Entware
-    molot_path=/home/${USER_NAME}/molot
-
-    docker run -it \
-        --mount type=bind,source=${APP_ROOT}/${APP_NAME},target=/home/${USER_NAME}/${APP_NAME} \
-        --mount type=bind,source=${root_path}/,target=${molot_path}/ \
-        --env-file ${env_file} \
-        --entrypoint ${molot_path}/docker/entrypoint \
-        --name ${docker_container_name} ${IMAGE_NAME} || {
-            error "Возникла ошибка при запуске контейнера ${BLUE}${docker_container_name}${NOCL}"
-            docker logs "${docker_container_name}"
-            exit 1
-    }
 fi
+

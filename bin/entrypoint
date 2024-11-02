@@ -22,18 +22,18 @@
 # set -x
 
 # Подключаем библиотеку общих функций
-source ${HOME}/${APP_NAME}/molot/libs/general
-source ${HOME}/${APP_NAME}/molot/libs/container
+source ${HOME}/molot/libs/general
+source ${HOME}/molot/libs/container
 
 # Удаляем файл с индикатором сборки
 [ -f ${BUILDED_STAGES_FILE} ] && rm -f ${BUILDED_STAGES_FILE}
 
-# Устанавливаем bash-профиль для вывода вспоможностей
+# Устанавливаем bash-профиль для вывода возможностей
 set_bashrc_profile 
 
 # Запускаем интерактивную сессию
 bash 
 
 # Выход должен быть из ENTRYPOINT 
-# обязательно успешным, т.е. 0
+# обязательно успешным, т.е. exit 0
 exit 0

@@ -8,7 +8,7 @@
     3. Подготовка конфигурации для конкретной архитектуры
     4. Сборка инструментария ${BLUE}toolchain${NOCL}
     5. Сборка самого пакета ${BLUE}${APP_NAME}${NOCL}
-    6. Копирование пакета в папку проекта ${BLUE}${HOME}/${APP_NAME}/packages/${ENTWARE_ARCH}${NOCL}
+    6. Копирование пакета в папку проекта ${BLUE}${HOME}/${APP_NAME}/packages/${BUILDING_ARCH}${NOCL}
     7. Копирование собранного пакета на Ваш роутер.
     8. Установка пакета на роутере и запуск тестов
 
@@ -33,7 +33,7 @@
       ${BLUE}make dirclean${NOCL}
 
     ${BOLD}Команда для создания конфигурации с нуля${NOCL}:
-      ${BLUE}cp -vf configs/${ENTWARE_ARCH}-*.config .config ${NOCL}
+      ${BLUE}cp -vf configs/${BUILDING_ARCH}-*.config .config ${NOCL}
       ${BLUE}grep -q ${APP_NAME} .config || echo \"CONFIG_PACKAGE_${APP_NAME}=m\" >> .config ${NOCL}
       ${BLUE}make defconfig${NOCL}
       ${BLUE}make menuconfig${NOCL}

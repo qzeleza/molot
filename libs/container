@@ -32,8 +32,9 @@ DEBUG=0
 # крайнюю стадию сборки, которая прошла успешно
 BUILDED_STAGES_FILE="${HOME}/${APP_NAME}/.stages"
 
+# set -x
 # Путь к entware
-ENTWARE_PATH=$HOME/entware
+BUILDING_ENV_PATH="${HOME}/${BUILDING_ENV}"
 
 # Массив функций стадий cборки
 STAGES_FUNC_NAME=(
@@ -50,7 +51,7 @@ STAGES_FUNC_NAME=(
 # Подключаем библиотеку отладки 
 # Подключается обязательно после 
 # объявления массива STAGES_FUNC_NAME 
-[ ${DEBUG} -eq 1 ] && source ${HOME}/${APP_NAME}/molot/libs/debuger 
+[ ${DEBUG} -eq 1 ] && source ${HOME}/molot/libs/debuger 
 
 
 # Определяем количество стадий по размеру массива
@@ -147,10 +148,10 @@ stage1_clone_github_entware_repo() {
 	# Первый этап сборки - клонирование репозитория
 	header "Клонируем среду разработки Entware из репозитория "
 
-	[ -d ${ENTWARE_PATH} ] && rm -rf ${ENTWARE_PATH}
-	# [ -d ${ENTWARE_PATH} ] && cd ${ENTWARE_PATH} #; make clean || true
-	mkdir -p ${ENTWARE_PATH} && cd ${HOME} &> /dev/null || true
-	git clone https://github.com/Entware/Entware.git ${ENTWARE_PATH} || {
+	[ -d ${BUILDING_ENV_PATH} ] && rm -rf ${BUILDING_ENV_PATH}
+	# [ -d ${BUILDING_ENV_PATH} ] && cd ${BUILDING_ENV_PATH} #; make clean || true
+	mkdir -p ${BUILDING_ENV_PATH} && cd ${HOME} &> /dev/null || true
+	git clone ${REPO_URL} ${BUILDING_ENV_PATH} || {
 		error "[Стадия №1]: Возникла ошибка при клонировании репозитория Entware"
 		return 1
 	}
@@ -158,7 +159,7 @@ stage1_clone_github_entware_repo() {
 	# Фиксируем сборку первого этапа
 	echo 1 > "${BUILDED_STAGES_FILE}"
 
-	cd "${ENTWARE_PATH}" && return 0
+	cd "${BUILDING_ENV_PATH}" && return 0
 # set +x
 }
 
@@ -169,10 +170,10 @@ stage2_refresh_symlinks() {
 	header "Обновляем ссылки на источники пакетов..."
 
 	# Обновляем ссылки на источники пакетов
-	cd ${ENTWARE_PATH} && git fetch	
+	cd ${BUILDING_ENV_PATH} && git fetch	
 
 	# Собираем пакеты
-	${ENTWARE_PATH}/scripts/feeds update -a || {
+	${BUILDING_ENV_PATH}/scripts/feeds update -a || {
 		error "[Стадия №2]: Возникла ошибка при обновлении ссылок на источники пакетов"
 		return 1
 	}
@@ -180,7 +181,7 @@ stage2_refresh_symlinks() {
 	print_line
 	header "Устанавливаем источники пакетов..."
 
-	${ENTWARE_PATH}/scripts/feeds install -a || {
+	${BUILDING_ENV_PATH}/scripts/feeds install -a || {
 		error "[Стадия №2]: Возникла ошибка при установке источников пакетов"
 		return 1
 	}
@@ -189,10 +190,10 @@ stage2_refresh_symlinks() {
 	header "Обновляем и устанавливаем источник для пакета ${BLUE}${APP_NAME}${NOCL}..."
 
 	{
-		grep -q ${APP_NAME} ${ENTWARE_PATH}/.feeds 2>/dev/null || echo "src-link ${APP_NAME} ${ENTWARE_PATH}/feeds/packages/${APP_NAME}" >> ${ENTWARE_PATH}/.feeds
-		ln -sf ${HOME}/${APP_NAME} ${ENTWARE_PATH}/feeds/packages/
-		${ENTWARE_PATH}/scripts/feeds update packages ${APP_NAME}
-		${ENTWARE_PATH}/scripts/feeds install -a ${APP_NAME}
+		grep -q ${APP_NAME} ${BUILDING_ENV_PATH}/.feeds 2>/dev/null || echo "src-link ${APP_NAME} ${BUILDING_ENV_PATH}/feeds/packages/${APP_NAME}" >> ${BUILDING_ENV_PATH}/.feeds
+		ln -sf ${HOME}/${APP_NAME} ${BUILDING_ENV_PATH}/feeds/packages/
+		${BUILDING_ENV_PATH}/scripts/feeds update packages ${APP_NAME}
+		${BUILDING_ENV_PATH}/scripts/feeds install -a ${APP_NAME}
 	} || {
 		error "[Стадия №2]: Возникла ошибка при установке источника для пакета ${BLUE}${APP_NAME}${NOCL}"
 		return 1
@@ -213,11 +214,12 @@ stage3_make_menuconfig() {
 	
 	# Третий этап сборки - создание конфигурации
 	print_line
-	header "Создаем файл конфигурации под ${BLUE}${ENTWARE_ARCH}${NOCL}..."
+	header "Создаем файл конфигурации под ${BLUE}${BUILDING_ARCH}${NOCL}..."
 
-	# ln -sf "$HOME/${APP_NAME}" ${ENTWARE_PATH}/package/feeds/packages/
+	# ln -sf "$HOME/${APP_NAME}" ${BUILDING_ENV_PATH}/package/feeds/packages/
 	# Копируем конфигурацию для заданной архитектуры
-	cp -vf configs/${ENTWARE_ARCH}-*.config .config
+	cp -vf configs/${BUILDING_ARCH}-*.config .config
+	grep -q kvaspro .config || echo "CONFIG_PACKAGE_kvaspro=m" >> .config
 
 	# Собираем конфигурацию
 	make defconfig || {
@@ -255,7 +257,8 @@ stage4_build_toolchain() {
 stage5_build_package() {
 
 	local answer="y"
-	message "Инструментарий ${BLUE}toolchain${NOCL} был собран успешно."
+	print_line
+	header "Инструментарий ${BLUE}toolchain${NOCL} был собран успешно."
 	read_ynq "Запустить сборку пакета ${APP_NAME}?" answer
 	
 	# Выходим из скрипта если нажали отмену или нет
@@ -266,7 +269,7 @@ stage5_build_package() {
 		clear && print_line
 		header "Запускаем сборку пакета ${BLUE}${APP_NAME}${NOCL}"
 
-		PATH=${ENTWARE_PATH}/build_dir/host/bin:$PATH
+		PATH=${BUILDING_ENV_PATH}/build_dir/host/bin:$PATH
 		make -j12 package/${APP_NAME}/{clean,compile} || {
 			error "[Стадия №5]: Возникла ошибка при сборке пакета ${APP_NAME}"
 			make -j1 V=cs package/${APP_NAME}/compile 
@@ -282,16 +285,16 @@ stage5_build_package() {
 stage6_copy_package_to_project_dir() {
 
 	print_line
-	header "Копируем собранный ipk пакет папку ${BLUE}${HOME}/${APP_NAME}/packages/${ENTWARE_ARCH}${NOCL}"
+	header "Копируем собранный ipk пакет папку ${BLUE}${HOME}/${APP_NAME}/packages/${BUILDING_ARCH}${NOCL}"
 
 	# Копируем собранный пакет в папку собранных пакетов
-    [ -d "${HOME}/${APP_NAME}/molot/${ENTWARE_ARCH}" ] || mkdir -p ${HOME}/${APP_NAME}/packages/${ENTWARE_ARCH}/
+    [ -d "${HOME}/molot/${BUILDING_ARCH}" ] || mkdir -p ${HOME}/${APP_NAME}/packages/${BUILDING_ARCH}/
 
 	# Получаем имя архитектуры без префикса и суффикса
 	arch_conf=$(ls configs/aarch* | sed 's|.*/\(.*\)\..*$|\1|')
 
     # Копируем в папку проекта собранный пакет
-    cp ${ENTWARE_PATH}/bin/targets/${arch_conf}/generic-glibc/packages/${APP_NAME}_*.ipk ${HOME}/${APP_NAME}/packages/${ENTWARE_ARCH}/ || {
+    cp ${BUILDING_ENV_PATH}/bin/targets/${arch_conf}/generic-glibc/packages/${APP_NAME}_*.ipk ${HOME}/${APP_NAME}/packages/${BUILDING_ARCH}/ || {
 		error "[Стадия №6]: Возникла ошибка при передаче пакета на роутер"
 		return 1
 	}
@@ -314,7 +317,7 @@ stage7_copy_package_to_router() {
 			error "[Стадия №7]: Возникла ошибка при создании директории /opt/packages на роутере"
             return 1
 		}
-        scp -OP ${ROUTER_PORT} "${HOME}/${APP_NAME}/packages/${ENTWARE_ARCH}/${APP_NAME}_*.ipk" ${ROUTER_SSH}:/opt/packages/ || {
+        scp -OP ${ROUTER_PORT} "${HOME}/${APP_NAME}/packages/${BUILDING_ARCH}/${APP_NAME}_*.ipk" ${ROUTER_SSH}:/opt/packages/ || {
             error "[Стадия №7]: Возникла ошибка при передаче пакета на роутер"
             return 1
         }
@@ -359,9 +362,10 @@ hello() {
     echo
     echo -e "   🐳 Сейчас мы находимся внутри контейнера"
     echo
+    echo -e "   ${BOLD}Собираем под${NOCL} : ${BLUE}${BUILDING_ENV}${NOCL}"
     echo -e "   ${BOLD}Пользователь${NOCL} : ${BLUE}${USER_NAME}${NOCL}"
     echo -e "   ${BOLD}Приложение${NOCL}   : ${BLUE}${APP_NAME}${NOCL}"
-    echo -e "   ${BOLD}Архитектура${NOCL}  : ${BLUE}${ENTWARE_ARCH}${NOCL}"
+    echo -e "   ${BOLD}Архитектура${NOCL}  : ${BLUE}${BUILDING_ARCH}${NOCL}"
     echo -e
 	echo -e "   ${BOLD}Сборка${NOCL}       : ${GREEN}build <N>${NOCL}, где N - номер стадии сборки"
     echo -e "   ${BOLD}Справка${NOCL}      : ${GREEN}help${NOCL}"
@@ -393,7 +397,7 @@ set_bashrc_profile(){
         printf "alias ll='ls $LS_OPTIONS -lai'\n";
         printf "alias l='ls $LS_OPTIONS -lA'\n";
         printf "alias nano='nano +999999 -l'\n";
-		printf "alias build='${HOME}/${APP_NAME}/molot/bin/insider'$@\n";
+		printf "alias build='${HOME}/molot/bin/builder'$@\n";
 
 		printf "help() {\n"
 		printf '    \n'
@@ -404,11 +408,11 @@ set_bashrc_profile(){
 		printf '    \n'
 		printf "    while IFS= read -r line; do\n"
 		printf '	eval "echo -e \\"${line}\\""\n'
-		printf "    done < ${HOME}/${APP_NAME}/molot/config/help.me\n"
+		printf "    done < ${HOME}/molot/config/${BUILDING_ENV}/help\n"
 		printf "}\n"
 
-        printf "[ -d ${ENTWARE_PATH} ] || mkdir -p ${ENTWARE_PATH} && cd ${ENTWARE_PATH}\n" 
-		printf "${HOME}/${APP_NAME}/molot/bin/insider\n"
+        printf "[ -d ${BUILDING_ENV_PATH} ] || mkdir -p ${BUILDING_ENV_PATH} && cd ${BUILDING_ENV_PATH}\n" 
+		printf "${HOME}/molot/bin/builder\n"
 
 	) > ${HOME}/.bash_aliases || {
 		error "При записи данных в файл ${BLUE}${HOME}/.bash_aliases${NOCL} возникла ошибка."

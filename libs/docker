@@ -11,37 +11,525 @@
 #   Лицензия    : Apache Версия 2.0
 #
 #   Создан      : 27 октября 2024 год
-#   Обновлен    : 30 октября 2024 год
+#   Обновлен    : 31 октября 2024 год
 # 
 # 
 #----------------------------------------------------------------------------------
 
-set -xe 
+# set -xe 
 
 # Файл списка проектов
-LIB_PATH=$(dirname $(dirname $(readlink -f $0)))
-PROJECTS_FILE="${LIB_PATH}/.projects"
+MOLOT_PATH=$(dirname $(dirname $(readlink -f $0)))
+IMAGES_CONFIG_PATH="${MOLOT_PATH}/config"
+MOLOT_CONFIG_PATH="${IMAGES_CONFIG_PATH}/molot"
+APPS_LIST_FILE="${MOLOT_CONFIG_PATH}/.apps"
 
-set_env_file() {  
+# Файл среды сборки контейнера
+ENV_FILE="${MOLOT_CONFIG_PATH}/.env"
+# Содержит следующие переменые 
+# USER_NAME 		- имя пользователя
+# APP_NAME			- имя приложения/проекта
+# BUILDING_ENV		- среда сборки: entware, openwrt, padavan
+# BUILDING_ARCH		- архитектрура сборки: aarch64, mips, mipsel
+# APP_ROOT			- базовый путь до приложения/проекта
+# IMAGE_NAME		- имя образа
+# CONTAINER_NAME	- имя контейнера
 
-	(
-		printf 'USER_NAME='
-		printf 'APP_NAME=kvaspro'
-		printf 'ENTWARE_ARCH=aarch64'
-		printf 'ROUTER_SSH=root@'	
-		printf 'ROUTER_PORT=22'
-		printf 'APP_ROOT=/opt'
-		printf 'IMAGE_NAME=entware-builder'
+# Элементы имени докер-образа для проекта Молот
+DOCKER_IMAGE_PREFIX=molot
+DOCKER_IMAGE_POSTFIX=image
 
-	) > "${env_file}" 
-    nano ${env_file} && {
-        source ${env_file}
-        [ -z "${USER_NAME}" ] && {
-            error "Данные не заполены - отредактируйте файл ${env_file}."
-            return 1
-        }
-    }
+# Элементы имени докер-контейнера для проекта Молот
+DOCKER_CONTAINER_PREFIX=molot
+DOCKER_CONTAINER_POSTFIX=builder
+
+# Массив элементов меню для выбора среды разработки
+declare -a ENV_ITEMS
+ENV_ITEMS=(
+	"entware" "Среда Entware"
+	"openwrt" "Среда Openwrt"
+	"padavan" "Среда Podavan"
+)
+
+# Массив элементов меню для выбора архитектуры разработки
+declare -a ARCH_ITEMS
+ARCH_ITEMS=(
+
+	"aarch64" "Процессор aarch64"
+	"mips"    "Процессор mips"
+	"mipsel"  "Процессор mipsel"
+)
+
+
+# Функция для поиска всех папок в заданной директории
+create_env_items_array() {
+
+    local dir_path="$1"
+    # Используем declare -n для ссылки на массив
+    declare -n result_array="$2"
+
+    # Проверяем, указана ли директория
+    if [[ -z "$dir_path" ]]; then
+        echo "Ошибка: директория не указана."
+        return 1
+    fi
+
+    # Проверяем, существует ли директория
+    if [[ ! -d "$dir_path" ]]; then
+        echo "Ошибка: директория '$dir_path' не существует."
+        return 1
+    fi
+
+    # Очищаем массив перед добавлением новых значений
+    local result_array=()
+	local _text_item=''
+    # Используем find для поиска всех директорий
+    while IFS= read -r -d '' dir; do
+		# добавялем в массив все папки в котрорых есть Dockerfile, кроме папки molot 
+        if [[ -f "${dir}/Dockerfile" && "${dir}" != ${dir_path}/molot ]] ; then
+			_text_item="$(basename "$dir")"
+			result_array+=( "${_text_item}" "Среда ${_text_item}" )
+		fi 
+    done < <(find "$dir_path" -mindepth 1 -maxdepth 1 -type d -print0)
+
+    return 0
+}
+
+
+# Функция для выбора нового проекта
+select_project() {
+#set -xe
+	while true; do
+		
+		local _projects=()
+		
+		# Получаем массив проектов из списка по ссылке
+		# массив состоит из ( <имя_проекта> <путь_к_проекту> )
+		get_list_projects _projects 
+
+		if [ ${#_projects[@]} -gt 0 ]; then
+			# Отображаем список существующих проектов
+			CancelButtonText=Выйти
+			local _sel_project_path=$(show_menu "Выбор проекта" "Проекты" "\n Выберите проект и действие над ним" \
+									"--extra-button --extra-label Новый --help-button --help-label Удалить --no-collapse --cr-wrap --aspect 12" \
+									"auto" _projects)
+			# CancelButtonText=''
+			# Проверяем, была ли нажата кнопка выбора
+			is_cancel_pressed "${_sel_project_path}" && exit 1
+			is_esc_pressed "${_sel_project_path}" && exit 1
+
+			# Если нажали на клавишу Новый
+			is_extra_pressed "${_sel_project_path}" && {
+				create_new_project
+			}
+			# если нажали Удалить кнопку
+			if is_help_pressed "${_sel_project_path}" ; then 
+				local _project_path=$(get_project_path_by_name "${_sel_project_path//*HELP /}")
+				remove_project_path_from_file "${_project_path}"
+			else
+				# Если проект выбран, то вызываем функцию выбора среды разработки
+				save_project_path_to_file "${_sel_project_path}"
+				_project_name=${_sel_project_path//*|/}
+				choose_build_environment "${_project_name}"
+				break
+			fi 
+
+		else
+			# Если проектов нет или файл не существует, создаем новый проект
+			create_new_project
+		fi
+	done
+
+set +xe
+}
+
+
+# Функция для создания нового проекта
+create_new_project() {
+	
+	local _arg_1=${1:-}
+	local _arg_2=${2:-}
+
+    local _menu=(
+		1 "Поиск проекта на диске"
+		2 "Клонирование проекта из Github"
+	)
+
+    local choice=$(show_menu "Создание нового проекта" \
+						"Меню выбора " \
+						"\n Сохраненных проектов не найдено\n Выберите дальнейшее действие" \
+						"--no-collapse --no-tags --cr-wrap --aspect 3" "auto" _menu) 
+
+    case "${choice}" in
+
+		@1*)    exit 0 ;;                    # выход из меню при нажатии на Выход
+        "1")    search_project ;;
+        "2")    clone_project ;;
+        *)
+            show_error_dialog "Неверный выбор."
+            exit 1
+            ;;
+    esac
+
+}
+
+
+# Функция для поиска проекта на диске
+search_project() {
+
+	local _name=${1:-}
+	local _path=${2:-}
+	local project_dir project_name
+
+	local _data=(
+		" Название проекта"  1 1 "${_name}" 1 30 20 0 0 
+        " Директория поиска" 2 1 "${_path}" 2 30 20 0 0
+	)
+
+    local input=$(show_form "Поиск проекта" "Поиск проекта на диске" "${_data[@]}")
+
+	is_cancel_pressed "${input}" && exit 1
+
+    # Обрабатываем ввод пользователя
+	project_name=$(echo "$input" | awk 'NR==1')
+	project_dir=$(echo "$input" | awk 'NR==2')
+
+	# Проверяем введенное имя
+	[ -z "${project_name}" ] && {
+		show_error_dialog "Задайте имя проекта!"
+		search_project "" "${project_dir}"
+	}
+
+	# Проверяем введенный каталог 
+	[ -z "${project_dir}" ] && project_dir='/'
+	[ -d "${project_dir}" ] || {
+		show_error_dialog "Заданный каталог поиска \Z4${project_dir}\Zn не существует\nВведите новые данные"
+		search_project "${project_name}" "${project_dir}"
+	}
+
+    # Выполняем поиск
+    found_projects=()
+    while IFS= read -r -d '' project; do
+        found_projects+=("${project##*/}" "${project}")
+    done < <(find "${project_dir}" -type d -name "*${project_name}*" -print0 2>/dev/null)
+
+    if [ ${#found_projects[@]} -gt 0 ]; then
+        # Если найдено, показываем список найденных проектов
+        local selected_project
+        selected_project=$(show_menu "Создание нового проекта" \
+							"Найденные проекты" \
+		 					"\n Выберите один из найденных проектов" \
+							 "--no-collapse --cr-wrap --aspect 3" "auto" found_projects)
+
+		# Если не нажаты кнопки выхода
+		if is_esc_pressed "${selected_project}" || is_cancel_pressed "${selected_project}" ; then 
+			exit 1
+		else
+
+			local _sel_project_path_index=$(find_index_in_array found_projects ${selected_project})
+			local _sel_project_path=${found_projects[${_sel_project_path_index} + 1]}
+			
+			# проверяем проект на соотвествие условиям сборки 
+			if is_project_for_building "${_sel_project_path}" ; then
+				# сохраняем путь до проекта и переходим к выбору среды разработки
+				save_project_path_to_file "${_sel_project_path}"
+				choose_build_environment "${selected_project}"
+			else 
+				show_error_dialog "В выбранном проекте, отсуствует папка \Zb\Z4./src\Zn с исходниками \nили в папке нет файла манифеста \Zb\Z4./Makefile\Zn в корне проекта\nили сам файл \Zb\Z4Makefile\Zn не является файлом манифеста\n\nПопробуйте найти другой проект."
+				# если проект не соответствует условиям для сборки проекта, то ищем дальше
+				create_new_project "${project_name}" "${project_dir}"
+			fi 
+		fi 
+
+    else
+        show_message_dialog "Результат" "Проект \Z4${project_name}\Zn по заданному пути не найден.\nПоробуйте ввести другие данные"
+        search_project "${project_name}" "${project_dir}"
+    fi
+set +xe 
+
+}
+
+# Функция для клонирования проекта из Github
+clone_project() {
+# set -xe
+	local _git_url=${2:-}
+	local _path=${1:-}
+
+	local _data=(
+		" Ссылка на репозиторий"    1 1 "${_git_url}" 1 30 40 0 0 
+        " Директория для установки" 2 1 "${_path}"    2 30 40 0 0
+	)
+
+    local input=$(show_form "Клонирование проекта" "Данные для клонирования" "${_data[@]}")
+
+	# Проверяем нажатие клавиш выхода
+	is_esc_pressed "${input}" && exit 1
+	is_cancel_pressed "${input}" && exit 1
+
+    # Обрабатываем ввод пользователя
+	install_dir=$(echo "$input" | awk 'NR==1')
+	repo_url=$(echo "$input" | awk 'NR==2')
+
+	# Проверяем введенное имя
+	[ -z "${repo_url}" ] && {
+		show_error_dialog "Задайте ссылку на репозиторий!"
+		clone_project "" "${repo_url}"
+	}
+
+	# Проверяем введенный каталог 
+	[ -z "${install_dir}" ] && install_dir='./'
+	
+	local _project_name=${repo_url##*/}
+	_project_name=${_project_name//.git/}
+
+	# если путь не заканчиватеся именем проекта, то добавляем его к нему
+	[ ${install_dir##*/} = ${_project_name} ] || install_dir=${install_dir}/${_project_name}
+
+	[ -d "${install_dir}" ] || {
+		local mess="Каталог установки \Z4${install_dir}\Zn не существует\nСоздать его?"
+		local answer=$(show_yes_no_dialog "${mess}")
+		# Если подтвердили удаление
+		if is_ok_yes_pressed "${answer}" ; then
+			local _error=$(mkdir -p "${install_dir}" 2>&1)|| {
+				show_error_dialog "Возникла ошибка при создании каталога\n\Z4${_error}\Zn"
+				clone_project "${install_dir}" "${repo_url}"
+			}
+		else 
+			clone_project "${install_dir}" "${repo_url}"
+		fi 
+	}
+
+    # Клонируем проект
+    if error=$(git clone "${repo_url}" "${install_dir}" 2>&1); then 
+		# сохраняем путь до проекта и переходим к выбору среды разработки
+		save_project_path_to_file "${install_dir}"
+		choose_build_environment "${_project_name}"
+	else 
+		show_error_dialog "Ошибка при клонировании репозитория.\n\Z4${error}\Zn"
+		clone_project "${install_dir}" "${repo_url}"
+	fi
+
+}
+
+
+# Функция выбора среды разработки
+# $1 - имя проекта
+choose_build_environment() {
+# set -xe
+	local _project_name=${1}
+
+	# Проверяем есть ли данное имя в списке существущих проектов
+	# Проверка необходима, если функция вызывается из molot
+	check_project_name "${_project_name}" || return 1
+
+	# Готовим элементы меню массива среды разработки
+	prepare_menu_enviroment_items ENV_ITEMS
+
+    local _selected_env=$(show_menu "Выбор среды разработки" \
+							"Меню выбора " \
+							"\n Выберите среду разработки проекта" \
+							"--no-collapse --no-tags --cr-wrap --aspect 3" "auto" ENV_ITEMS)
+	
+	# Проверяем нажатие клавиш выхода
+	is_esc_pressed "${_selected_env}" && exit 1
+	is_cancel_pressed "${_selected_env}" && exit 1
+
+	choose_architecture "${_project_name}" "${_selected_env}"
+}
+
+
+# Функция выбора архитектуры
+# $1 - имя проекта
+# $2 - имя среды разработки
+choose_architecture() {
+
+# set -xe
+	local _project_name=${1}
+    local _env_name=${2}
+
+	# Проверяем есть ли данное имя в списке существущих проектов
+	# Проверка необходима, если функция вызывается из molot
+	[ -n "${_project_name}" ] && check_project_name "${_project_name}" || return 1
+
+	# Проверяем есть ли данное _env_name в списке существущих архитектур
+	# Проверка необходима, если функция вызывается из molot
+	[ -n "${_env_name}" ] && contains_element ENV_ITEMS "${_env_name}"  || return 1
+
+	# Готовим элементы меню массива среды разработки
+	prepare_menu_architecture_items "${_project_name}" "${_env_name}" 
+    local _selected_arch=$(show_menu "Выбор архитектуры процессора" \
+							"Меню выбора " \
+							"\n Выберите архитектуру\n процессора для сборки" \
+							"--no-collapse --no-tags --cr-wrap --aspect 6" "auto" ARCH_ITEMS)
+	
+	# Проверяем нажатие клавиш выхода
+	is_esc_pressed "${_selected_arch}" && exit 1
+	is_cancel_pressed "${_selected_arch}" && exit 1
+
+	local _app_path=$(get_project_path_by_name "${_project_name}")
+	local _docker_image_name=$(get_docker_image_name "${_env_name}")
+
+	# Под root собирать не рекомендуется - будут ошибки
+	local _user=${USER}; [ ${_user} = root ] && _user=me
+
+	# Сохраняем полученные данные в файл для передачи внутрь контейнера
+	cat <<-EOF > ${ENV_FILE}
+		USER_NAME=${_user}
+		APP_NAME=${_project_name}
+		BUILDING_ENV=${_env_name}
+		BUILDING_ARCH=${_selected_arch}
+		APP_ROOT=${_app_path}
+		IMAGE_NAME=${_docker_image_name}
+		CONTAINER_NAME=$(get_docker_container_name "${APP_NAME}" "${BUILDING_ENV}" "${BUILDING_ARCH}")
+EOF
+
 	return 0
+}
+
+
+
+# Функция проверяет проект на наличие 
+# в нем необходимых папок и файлов для сборки
+is_project_for_building(){
+
+	local _project_path=${1}
+
+	# Первое нимимальное требование к проекту для сборки
+	# есть ли папка с исходниками под названием src?
+	[ -d "${_project_path}/src" ] || return 1
+
+	# Второе нимимальное требование к проекту для сборки
+	# проверяме наличие в проекте файла манифеста для сборки
+	if [ -f "${_project_path}/Makefile" ] ; then 
+
+		# Третье нимимальное требование к проекту для сборки
+		# если он есть, то соответвует ли его содерждимое файлу манифеста
+		# проверяем по признаку наличия строки "include $(TOPDIR)/rules.mk"
+		grep -q "include \$(TOPDIR)/rules.mk" "${_project_path}/Makefile"
+
+	else
+		return 1
+	fi 
+
+}
+
+get_list_projects(){
+
+#set -xe
+# Функция получения и формирования массива проектов из списка
+# массив состоит из ( <имя_проекта> <путь_к_проекту> )
+# массив возвращается по ссылке
+
+	local -n _project_list=${1}
+	local project_name
+
+	# Проверяем существование файла APPS_LIST_FILE
+    if [ -f "${APPS_LIST_FILE}" ]; then
+        # Считываем проекты из файла
+        while IFS= read -r line; do
+            # Получаем последнее слово (название проекта) из строки
+            project_name="${line##*/}"
+            _project_list+=("${project_name}" "${line}")
+        done < "${APPS_LIST_FILE}"
+    fi
+
+}
+
+# Функция удаления выбранного проекта
+remove_project_path_from_file() {
+#set -xe
+	local _project="${1}"
+
+	local mess="Подтвердите удаление проекта \Z4${_project##*/}\Zn"
+	# Глобавльная переменная для клавиши Yes в dialog
+	YesButtonText="Подтверждаю"
+	# Выводим диалог с запросом на удаление
+	local answer=$(show_yes_no_dialog "${mess}")
+	YesButtonText="Да"
+	# Если подтвердили удаление
+	if is_ok_yes_pressed "${answer}" ; then
+		local escaped_text=$(echo "$_project" | sed 's/\//\\\//g')
+		# удаляем из списка проектов
+		sed -i "/${escaped_text}/d" "${APPS_LIST_FILE}"
+	fi 
+set +xe
+}
+
+
+# Готовим элементы меню массива сред разработки
+# для использовоания в функции choose_build_environment
+# $1 - массив сред разработки из двух колонок
+
+prepare_menu_enviroment_items(){
+#set -xe
+	local -n _items=${1}
+	local _new_items=()
+	local _sel_color_code='\Z3'
+
+	local _status_builded="[образ собран]"			# статус пункта меню, если образ найден
+
+	local _items_width=15 				# общая ширина пунктов меню без ширины строки статуса
+	local _dockerfile_name=''
+	local _status_len=${#_status_builded}
+	
+	# Проверка на существование докер-образов
+	for ((i = 0; i < ${#_items[@]}; i+=2)); do
+		
+		_dockerfile_name="$(get_dockerfile_name ${_items[i]})"
+
+		if [ -f "${_dockerfile_name}" ] && grep -q 'FROM' "${_dockerfile_name}" ; then
+			_new_items[i]=${_items[i]}
+			if docker images | grep -q "$(get_docker_image_name "${_items[i]}")"; then
+			# if [ $(random) = 1 ] ; then # для отладки
+				_new_items[i+1]="$(fill_str "${_items[i+1]}" ${_items_width}) ${_status_builded}"
+			else 
+				_new_items[i+1]="$(fill_str "${_items[i+1]}" $((_items_width + _status_len + 1)))"
+			fi
+		fi
+    done
+	_items=("${_new_items[@]}")
+
+}
+
+
+
+# Готовим элементы меню массива архитектуры сборки
+# для использовоания в функции choose_architecture
+# $1 - массив архитектуры сборки из двух колонок
+# $2 - имя проекта
+# $3 - имя среды разработки
+prepare_menu_architecture_items(){
+#set -xe
+	local _project_name=${1}
+    local _env_name=${2}
+
+	local _items_width=20    # общая ширина пунктов меню без ширины строки статуса
+
+
+	# Подключаем данные из файла среды разработки
+	source "${IMAGES_CONFIG_PATH}/${_env_name}/config"
+	#  обнуляем предыдущие значения
+	ARCH_ITEMS=()
+	# Подготовка массива поддреживаемых процессоров
+	for _arch in "${PROCS[@]}"; do
+		ARCH_ITEMS+=( "${_arch}" "Процессор ${_arch}" )
+	done
+
+	# Проверка на существование докер-образов
+	for ((i = 0; i < ${#ARCH_ITEMS[@]}; i+=2)); do
+		
+		local _container_name=$(get_docker_container_name "${_project_name}" "${_env_name}" "${ARCH_ITEMS[i]}")
+        local _status=$(get_container_status "${_container_name}")
+		
+		if [ -n "${_status}" ] ; then
+		# _status="[существует]"      # для отладки
+		# if [ $(random) = 0 ] ; then # для отладки
+			ARCH_ITEMS[i+1]="$(fill_str "${ARCH_ITEMS[i+1]}" ${_items_width}) ${_status^^}"
+		else 
+			ARCH_ITEMS[i+1]="$(fill_str "${ARCH_ITEMS[i+1]}" $((_items_width + ${#_status} + 1)))"
+        fi
+    done
+
 }
 
 
@@ -57,249 +545,129 @@ docker_exec() {
 	print_line && return 0
 }
 
+# Получаем имя Dockerfile для заданной среды сборки
+get_dockerfile_name(){
+	local _image=${1}
+	echo "${MOLOT_PATH}/config/${_image}/Dockerfile"
+}
 
-# Функция для выбора нового проекта
-select_project() {
-set -xe
-    local _projects=()
-    
-	# Получаем массив проектов из списка по ссылке
-	# массив состоит из ( <имя_проекта> <путь_к_проекту> )
-    get_list_projects _projects
+# Получаем имя docker образа для проекта Молот
+get_docker_image_name(){
+	local _image=${1}
+	echo "${DOCKER_IMAGE_PREFIX}_${_image}_${DOCKER_IMAGE_POSTFIX}" 
+}
 
-    if [ ${#_projects[@]} -gt 0 ]; then
-        # Отображаем список существующих проектов
-        local _project_choice=$(show_menu "Выбор проекта" "Проекты" "Выберите проект" \
-								"--extra-button --extra-label Удалить --no-collapse --cr-wrap --aspect 3" \
-								"auto" _projects)
-        
-        # Проверяем, была ли нажата кнопка выбора
-        is_cancel_pressed "${_project_choice}" && exit 0
-		is_esc_pressed "${_project_choice}" && exit 0
+# Получаем имя docker контейнера для проекта Молот
+get_docker_container_name(){
 
-		# Если нажали на клавишу Удалить (дополнительная кнопка экстра)
-		_project_name=${_project_choice//*|/}
-		is_extra_pressed "${_project_choice}" && remove_project "${_project_name}"
+	local _project=${1}		# имя проекта
+	local _image=${2}		# название среды сборки проекта
+	local _arch=${3}		# название архитектуры сборки проекта
 
-		# Если проект выбран, то вызываем функцию выбора среды разработки
-		local _path_project=$(grep "/${_project_name}$" ${PROJECTS_FILE})
-		choose_build_environment "${_path_project}"
+	echo "${DOCKER_CONTAINER_PREFIX}_${_project}_${_image}_${_arch}_${DOCKER_CONTAINER_POSTFIX}"
+}
 
-	else
-		# Если проектов нет или файл не существует, создаем новый проект
-    	create_new_project
+# Получаем путь до проекта из файла проектов
+get_project_path_by_name(){
+	local _project_name=${1}
+	grep "/${_project_name}$" "${APPS_LIST_FILE}"
+}
+
+save_project_path_to_file(){
+	local _project_path=${1}
+	grep -q "${_project_path}$" "${APPS_LIST_FILE}" || echo "${_project_path}" >> "${APPS_LIST_FILE}"
+}
+
+
+check_project_name(){
+
+# Проверяем наличие проекта по его имени 
+
+	local _p_name=${1}
+	local _ask=${2:-ask}
+
+	if [ -z $(get_project_path_by_name "${_p_name}") ]; then
+
+		if [ "${_ask}" = ask ] ; then  
+			local mess="Проекта \Zb\Z4${_p_name}\Zn пока не существует\n\nПробуем найти?\n"
+			# Выводим диалог с запросом на  поиск
+			local answer=$(show_yes_no_dialog "${mess}")
+			
+			# Если подтвердили поиск
+			if is_ok_yes_pressed "${answer}" ; then
+				search_project "${_p_name}" '/'
+				return 0
+			else 
+				exit 1
+			fi
+		else
+			local mess="Проекта \Zb\Z4${_p_name}\Zn не существует\n"
+			show_error_dialog "${mess}"
+			exit 1
+		fi 
+
 	fi
 
+}
 
-set +xe
+# Функция для получения статуса контейнера
+get_container_status() {
+
+    local _container_name="$1"
+    local _status
+	local _result=''	# статус для отсуствующего контейнера
+
+    # Проверка наличия контейнера по имени
+    if docker inspect "$_container_name" &>/dev/null; then
+
+		# Получение текущего статуса контейнера
+		_status=$(docker inspect --format='{{.State.Status}}' "$_container_name")
+
+		# Проверка и вывод статуса в формате
+		case "$_status" in
+			"running") 	_result="ЗАПУЩЕН" ;;
+			"exited")  	_result="ОСТАНОВЛЕН" ;;
+			"created") 	_result="СОЗДАН" ;;
+			*) 			_result="ПРОЧЕЕ" ;;
+		esac
+		# Добаляем скобки квадратные в результат
+		_result="[${_result=}]"
+	fi
+	# Возвращаем результат
+	echo "${_result}"
+
 }
 
 
-get_list_projects(){
+# Запускаем докер контейнер в первый раз
+create_docker_container(){
 
-# Функция получения и формирования массива проектов из списка
-# массив состоит из ( <имя_проекта> <путь_к_проекту> )
-# массив возвращается по ссылке
+	# Файл предназначен для сборки пакета Квас Про в среде разработке под Entware
+    molot_path_inside_containter=/home/${USER_NAME}/molot
 
-	local -n _project_list=${1}
-	local project_name
-
-	# Проверяем существование файла PROJECTS_FILE
-    if [ -f "${PROJECTS_FILE}" ]; then
-        # Считываем проекты из файла
-        while IFS= read -r line; do
-            # Получаем последнее слово (название проекта) из строки
-            project_name="${line##*/}"
-            _project_list+=("${project_name}" "${line}")
-        done < "${PROJECTS_FILE}"
-    fi
-
-}
-
-# Функция удаления выбранного проекта
-remove_project() {
-set -xe
-	local _project="${1}"
-
-	local mess="Подтвердите удаление проекта"
-	# Глобавльная переменная для клавиши Yes в dialog
-	YesButtonText="Подтверждаю"
-	# Выводим диалог с запросом на удаление
-	local answer=$(show_yes_no_dialog "${mess}")
-	# Если подтвердили удаление
-	if is_ok_pressed "${answer}" ; then
+    docker run -it \
+        --mount type=bind,source=${APP_ROOT},target=/home/${USER_NAME}/${APP_NAME} \
+        --mount type=bind,source=${ROOT_PATH}/,target=${molot_path_inside_containter}/ \
+        --env-file ${ENV_FILE} \
+        --entrypoint ${molot_path_inside_containter}/bin/entrypoint \
+        --name ${CONTAINER_NAME} ${IMAGE_NAME} || {
+            error "Возникла ошибка при запуске контейнера ${BLUE}${CONTAINER_NAME}${NOCL}"
+            docker logs "${CONTAINER_NAME}"
+            print_line
+            
+            YesButtonText=Удалить; NoButtonText="Оставить"
+            mess="Удалить контейнер ${CONTAINER_NAME} и перезапустить?"
+            # Выводим диалог с запросом на удаление
+            answer=$(show_yes_no_dialog "${mess}")
+            
+            # Если подтвердили удаление
+            if is_cancel_pressed "${answer}" ; then
+                # Переходим к процедуре выбора конфигурации проекта 
+                docker stop ${CONTAINER_NAME} &>/dev/null && docker rm ${CONTAINER_NAME} &>/dev/null
 		
-		# удаляем из списка проектов
-		sed -i "/${_project}/d" "${PROJECTS_FILE}"
-		# снова заходим в список
-		select_project 
-
-	fi 
-set +xe
-}
-
-
-
-# Функция для создания нового проекта
-create_new_project() {
-
-    local _menu=(
-		1 "Поиск проекта на диске"
-		2 "Клонирование проекта из Github"
-	)
-
-    local choice=$(show_menu "Создание нового проекта" \
-						"Меню выбора " \
-						"\n Выберите дальнейшее действие" \
-						"--no-collapse --no-tags --cr-wrap --aspect 3" "auto" _menu) 
-
-    case "${choice}" in
-
-		@1*)    exit 0 ;;                    # выход из меню при нажатии на Выход
-        "1")    search_project ;;
-        "2")    clone_project ;;
-        *)
-            show_message_dialog "Ошибка" "Неверный выбор."
+            fi
+            # Восстанавливаем текст кнопки
+            NoButtonText=Нет; YesButtonText=Да   
             exit 1
-            ;;
-    esac
-
-
+    }
 }
-
-
-# Функция для поиска проекта на диске
-search_project() {
-
-set -xe
-
-    local input
-	local _name=${1:-}
-	local _path=${2:-}
-	local project_dir project_name
-
-	local _data=(
-		" Название проекта"  1 1 "${_name}" 1 30 20 0 0 
-        " Директория поиска" 2 1 "${_path}" 2 30 20 0 0
-	)
-
-    input=$(show_form "Поиск проекта" "Поиск на диске" "${_data[@]}")
-
-	is_cancel_pressed "${input}" && return 1 
-
-    # Обрабатываем ввод пользователя
-	project_name=$(echo "$input" | awk 'NR==1')
-	project_dir=$(echo "$input" | awk 'NR==2')
-
-    # Выполняем поиск
-    found_projects=()
-    while IFS= read -r -d '' project; do
-        found_projects+=("${project//\//}" "${project//\//}")
-    done < <(find "${project_dir}" -type d -name "*${project_name}*" -print0 2>/dev/null)
-
-    if [ ${#found_projects[@]} -gt 0 ]; then
-        # Если найдено, показываем список найденных проектов
-        local selected_project
-        selected_project=$(show_select_one "Выбор проекта" "Найденные проекты" "" "${found_projects[@]}")
-        
-		is_esc_pressed "${selected_project}" && exit 0
-		is_cancel_pressed "${selected_project}" && exit 0
-
-        # Записываем путь к проекту
-        echo "${selected_project}" >> "${PROJECTS_FILE}"
-        choose_build_environment "${selected_project}"
-    else
-        show_message_dialog "Результат" "Проект по заданному пути не найден.\nПоробуйте еще раз."
-        create_new_project "${_name}" "${_path}"
-    fi
-set +xe 
-
-}
-
-# Функция для клонирования проекта из Github
-clone_project() {
-
-    local input
-	local _path=${1:-}
-	local _git_url=${2:-}
-
-	local _data=(
-        "Директория для установки" 1 1 "${_path}"    2 30 20 0 0
-		"Ссылка на репозиторий"    2 1 "${_git_url}" 1 30 20 0 0 
-	)
-    input=$(show_form "Клонирование проекта" "Введите данные для клонирования" "${_data[@]}")
-
-	# Проверяем нажатие клавиш выхода
-	is_esc_pressed "${input}" && exit 0
-	is_cancel_pressed "${input}" && exit 0
-
-    # Обрабатываем ввод пользователя
-	install_dir=$(echo "$input" | awk 'NR==1')
-	repo_url=$(echo "$input" | awk 'NR==2')
-    
-    # Клонируем проект
-    if git clone "${repo_url}" "${install_dir}" ; then 
-		# Записываем путь и имя проекта в файл
-		project_name="${repo_url##*/}"
-		echo "${install_dir}" >> "./projects"
-		choose_build_environment "${install_dir}"
-	else 
-		show_error_dialog "Ошибка при клонировании репозитория.\nПроверьте правильна ли указали ссылку."
-		clone_project "${_path}" "${_git_url}"
-	fi
-
-}
-
-# Функция выбора среды разработки
-choose_build_environment() {
-	
-    local os_items=(
-        "entware" "Entware"
-        "openwrt" "Openwrt"
-        "dd-wrt"  "DD-WRT"
-    )
-    
-    # Проверка на существование докер-образов
-    for os in "${os_items[@]}"; do
-        if docker images | grep -q "${os}"; then
-            os_items+=("$os [СОБРАН]")
-        fi
-    done
-
-    local selected_os
-    selected_os=$(show_select_one "Среда разработки" "Выберите один из вариантов" 1 "--aspect 6 --no-items" "${os_items[@]}")
-	
-	# Проверяем нажатие клавиш выхода
-	is_esc_pressed "${selected_os}" && exit 0
-	is_cancel_pressed "${selected_os}" && exit 0
-
-	choose_architecture "$selected_os"
-}
-
-# Функция выбора архитектуры
-choose_architecture() {
-    local arch_items=(
-        "aarch64" "Собираем под aarch64"
-        "mips"    "Собираем под mips"
-        "mipsel"  "Собираем под mipsel"
-    )
-
-    # Проверка на существование докер-контейнеров
-    for arch in "${arch_items[@]}"; do
-        if docker images | grep -q "${arch}"; then
-            arch_items+=("$arch [СОЗДАН]")
-        fi
-    done
-
-    local selected_arch
-    selected_arch=$(show_select_one "Архитектура процессора" "Выберите архитектуру" 1 "--aspect 6 --no-items" "${arch_items[@]}")
-	
-	# Проверяем нажатие клавиш выхода
-	is_esc_pressed "${selected_arch}" && exit 0
-	is_cancel_pressed "${selected_arch}" && exit 0
-
-    # Выводим результаты
-    show_message_dialog "Результаты" "Имя проекта: ${project_name}\nПуть к проекту: ${project_dir}\nВыбранная среда: ${selected_os}\nВыбранная архитектура: ${selected_arch}"
-}
-
-set +xe

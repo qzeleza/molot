@@ -1,0 +1,2 @@
+REPO_URL=https://github.com/Entware/Entware.git
+PROCS=(aarch64 mips mipsel)

@@ -25,7 +25,7 @@ CancelButtonText=Выйти                  # Метка для кнопки Ca
 YesButtonText=Да                        # Метка для кнопки Yes в Dialog
 NoButtonText=Нет                        # Метка для кнопки No в Dialog
 
-DialogOk=0                              # Код возврата при нажатии на кнопку Ok в Dialog
+DialogOk=0                              # Код возврата при нажатии на кнопку Ok или Yes в Dialog
 DialogCancel=1                          # Код возврата при нажатии на кнопку Cancel или No в Dialog
 DialogHelp=2                            # Код возврата при нажатии на кнопку Help в Dialog
 DialogExtra=3                           # Код возврата при нажатии на кнопку Extra (между Ok и Cancel) в Dialog
@@ -44,7 +44,7 @@ is_button_pressed_in_menu(){
     [[ "${1}" =~ ^@.* ]]
 }
 
-is_ok_pressed(){
+is_ok_yes_pressed(){
 #---------------------------------------------------------------------------------
 #   Убеждаемся, что была нажата клавиша Сохранить (Ok)
 #---------------------------------------------------------------------------------
@@ -107,6 +107,60 @@ is_error_pressed(){
     [ "${1//@${DialogError}/}" != "${1}" ] 
 }
 
+count_lines() {
+#---------------------------------------------------------------------------------
+# 
+#   Считаем число строка в многострочной строке
+#   Аргументы:
+#       $1 - Многострочная строка 
+# 
+#---------------------------------------------------------------------------------
+    local result=$(echo -e ${1} | grep -c '^')
+    
+    [ "${result}" -le 2 ] && {
+
+        local multiline_text="$1"  # Многострочный текст передается первым аргументом
+        local line_count=0
+
+        # Обходим каждую строку в многострочном тексте
+        while IFS= read -r line; do
+            ((line_count++))      # Увеличиваем счетчик строк на 1 для каждой строки
+        done <<< "$multiline_text"
+
+        result="$line_count"        # Возвращаем количество строк
+    }
+    echo ${result}
+}
+
+find_max_length() {
+#---------------------------------------------------------------------------------
+# 
+#   Возвращаем кодличество символов у самой длинной строке в многострочной строке
+#   Аргументы:
+#       $1 - Многострочная строка 
+# 
+#---------------------------------------------------------------------------------
+    local input_str="$1"
+    local max_length=0
+
+    # Заменяем символы '\n' на реальные символы новой строки
+    input_str=$(echo -e "$input_str")
+
+    # Обрабатываем строку построчно
+    while IFS= read -r line; do
+        # Получаем длину текущей строки
+        line_length=${#line}
+
+        # Если длина текущей строки больше максимальной, обновляем max_length
+        if (( line_length > max_length )); then
+            max_length=$line_length
+        fi
+    done <<< "$input_str"
+
+    # Выводим максимальную длину
+    echo $max_length
+}
+
 
 show_message_dialog() {
 #---------------------------------------------------------------------------------
@@ -120,9 +174,11 @@ show_message_dialog() {
 #---------------------------------------------------------------------------------
 
     if [ -n "${2}" ] ; then
-        dialog --colors ${3:-} \
+        local width=$(($(find_max_length "${2}") + 5))
+        local hight=$(($(count_lines "${2}") + 5)) 
+        dialog --colors ${3:-} --cr-wrap \
                --title "${1}" \
-               --msgbox "\n${2}\n" 0 0 \
+               --msgbox "\n${2}\n" "${hight}" "${width}" \
         2>&1 >/dev/tty
         # sleep "${timeout}"
         # kill $!
@@ -167,10 +223,12 @@ show_error_dialog() {
 #---------------------------------------------------------------------------------
 
     if [ -n "${1}" ] ; then
-        width=$((${#1} + 5))
+        local width=$(($(find_max_length "${1}") + 5))
+        local hight=$(($(count_lines "${1}") + 5)) 
         dialog  --colors --cr-wrap \
                 --title "\Z1ОШИБКА\Zn" \
-                --msgbox "\n${1}\n" 8 "${width}" \
+                --aspect 6 \
+                --msgbox "\n${1}\n" "${hight}" "${width}" \
         2>&1 >/dev/tty
     fi
 }
@@ -187,15 +245,19 @@ show_yes_no_dialog(){
     local question=${1}
     local default=${2:-yes}
     local extra=${3:-}
+    
 
     [ -n "${question}" ] && {
+        local width=$(($(find_max_length "${1}") + 5))
+        local hight=$(($(count_lines "${1}") + 7)) 
+
         dialog --colors --cr-wrap \
             --title "\Z4ВОПРОС\Zn" \
             --default-button "${default}" \
             --yes-label "${YesButtonText}" \
             --no-label "${NoButtonText}" \
             ${extra} \
-            --yesno "\n${1}\n" 0 0 \
+            --yesno "\n${1}\n" "${hight}" "${width}" \
             2>&1 >/dev/tty
         echo "@${?}"
     }
@@ -271,7 +333,7 @@ show_menu() {
     selected=$("${cmd[@]}" "${menu_array[@]}" 2>&1 >/dev/tty)
     code=${?}
     [[ "${code}" == 0 ]] && result="${selected}" || result="@${code}|${selected}"
-    printf "${result}\n"
+    printf "%s\n" "${result}"
 }
 
 show_select_one(){
@@ -310,7 +372,7 @@ show_select_one(){
                 0 0 0)
     choosen=$("${cmd[@]}" "${_menu_items[@]}" 2>&1 >/dev/tty)
     code=${?}; [[ "${code}" == 0 ]] && result="${choosen}" || result="@${code}"
-    printf "${result}" 
+    printf "%s" "${result}"
 }
 
 
@@ -360,7 +422,7 @@ show_multy_select(){
 
     # получаем код возврата и при отсуствии выбора отправиляем код возврата 
     code=${?}; [[ "${code}" == 0 ]] && result="${selected}" || result="@${code}|${selected}"
-    printf "${result}\n" 
+    printf "%s\n" "${result}" 
 }
 
 
@@ -442,7 +504,7 @@ show_input(){
 
     choosen=$("${cmd[@]}" 2>&1 >/dev/tty)
     code=${?}; [[ "${code}" == 0 ]] && result="${choosen}" || result="@${code}"
-    printf "${result}" 
+    printf "%s" "${result}" 
 
 }
 

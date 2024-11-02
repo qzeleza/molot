@@ -23,20 +23,30 @@
 
 # Включам редим вывода отладочных сообщений
 # set -x
+clear
+
+# Подключаем конфигурацию под конкретную среду сборки
+# Подключать нужно перед библиотекой molot/libs/container
+source ${HOME}/molot/config/${BUILDING_ENV}/config
 
 # Подключаем библиотеки общих функций
-source ${HOME}/${APP_NAME}/molot/libs/general
-source ${HOME}/${APP_NAME}/molot/libs/container
+source ${HOME}/molot/libs/general
+source ${HOME}/molot/libs/container
 
 # Очистка экрана
-clear && answer=""
+answer=""
 
+# Именуем переданный в скрипт аргумент
 _stage="${1}"
 
-[ "${_stage}" = "clone" ] && _stage=2
-[ "${_stage}" = "links" ] && _stage=2
-[ "${_stage}" = "tools" ] && _stage=3
-[ "${_stage}" = "app" ]   && _stage=4
+# Поддержка перехода к определенной стадии 
+# сборки при помощи маркеров а не цифр
+# вместо build 2 запускаем build links
+[ "${_stage}" = "clone" ] && _stage=2  # стадия клонирования
+[ "${_stage}" = "links" ] && _stage=3  # стадия обновления ссылок
+[ "${_stage}" = "tools" ] && _stage=4  # стадия сборки интструментария toolchain
+[ "${_stage}" = "app" ]   && _stage=5  # стадия сборки пакета
+
 
 
 # Обработка аргументов с использованием case

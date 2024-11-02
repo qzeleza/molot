@@ -1,0 +1,64 @@
+#!/bin/bash
+#----------------------------------------------------------------------------------
+#
+#   Проект: Молот [molot]
+# 
+#   Файл библиотек для установки/удаления и прочих настроек
+#   пакета Молот на устройство
+# 
+#   Автор       : Железа
+#   Email       : dev@zeleza.ru
+#   Лицензия    : Apache Версия 2.0
+#
+#   Создан      : 02 ноября 2024 год
+#   Обновлен    : 02 ноября 2024 год
+# 
+#----------------------------------------------------------------------------------
+
+
+remove_molot(){
+
+    # Меняем кнопки в диалоге
+    YesButtonText=Подтверждаю; NoButtonText="Отменить"
+
+    local mess="Пакет \Zb\Z4Молот\Zn будет удален бесповортно и навсегда\n\nПодтвердите удаление"
+    local answer=$(show_yes_no_dialog "${mess}")
+		# Если подтвердили удаление
+		if is_ok_yes_pressed "${answer}" ; then
+            {
+                # Удаляем все что связано с Молотом
+                rm -f /bin/molot
+                rm -fr /${MOLOT_PATH}
+            } \
+            && show_message_dialog "Удаление" "Пакет \Zb\Z4Молот\Zn удален успешно!" \
+            || show_error_dialog "Возникла ошибка при удалении пакета \n\Zb\Z4Молот\Zn"
+		fi 
+}
+
+install_ollama_ai(){
+    
+    available ollama || {
+
+        # Устанавливаем ollama на устройство
+        curl -fsSL https://ollama.com/install.sh | sudo sh
+        
+        # Добавляем текущего пользователя в группу ollama
+        sudo usermod -a -G ollama $(whoami)
+        sudo systemctl status ollama
+    }    
+    
+}
+
+update_ollama_ai(){
+# Обновляем ollama AI
+    curl -fsSL https://ollama.com/install.sh | sh
+}
+
+remove_ollama(){
+    {
+        sudo systemctl stop ollama
+        sudo systemctl disable ollama
+        sudo rm /etc/systemd/system/ollama.service
+
+    } 2>&1 || error "Ошибка при удалении пакета ollama"
+}
