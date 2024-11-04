@@ -27,10 +27,17 @@
 ================================================================================
  ${GREEN}Команды для ручной сборки пакета ${APP_NAME}${NOCL}
 ================================================================================
+    ${BOLD}Команды для обнавления пакетов${NOCL}:
+      ${BLUE}scripts/feeds update -a${NOCL}
+      ${BLUE}scripts/feeds install -a${NOCL}
+      
+      ${BLUE}echo 'src-link <имя_пакета> <ссылка_на_источник_пакетов>' >> feeds.conf${NOCL}
+      ${BLUE}scripts/feeds update <имя_пакета>${NOCL}
+      ${BLUE}scripts/feeds install <имя_пакета>${NOCL}
 
-    ${BOLD}Команды для очистки директорий${NOCL}:
-      ${BLUE}make clean${NOCL}
-      ${BLUE}make dirclean${NOCL}
+    ${BOLD}Команды для очистки директорий$${NOCL}:
+      ${BLUE}make clean$${NOCL}
+      ${BLUE}make dirclean$${NOCL}
 
     ${BOLD}Команда для создания конфигурации с нуля${NOCL}:
       ${BLUE}cp -vf configs/${BUILDING_ARCH}-*.config .config ${NOCL}

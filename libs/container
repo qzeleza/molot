@@ -362,10 +362,12 @@ hello() {
     echo
     echo -e "   🐳 Сейчас мы находимся внутри контейнера"
     echo
-    echo -e "   ${BOLD}Собираем под${NOCL} : ${BLUE}${BUILDING_ENV}${NOCL}"
+    echo -e "   ${BOLD}Платформа{NOCL} : ${BLUE}${BUILDING_ENV}${NOCL}"
+    echo -e "   ${BOLD}Архитектура${NOCL}  : ${BLUE}${BUILDING_ARCH}${NOCL}"
+	echo
     echo -e "   ${BOLD}Пользователь${NOCL} : ${BLUE}${USER_NAME}${NOCL}"
     echo -e "   ${BOLD}Приложение${NOCL}   : ${BLUE}${APP_NAME}${NOCL}"
-    echo -e "   ${BOLD}Архитектура${NOCL}  : ${BLUE}${BUILDING_ARCH}${NOCL}"
+	echo
     echo -e
 	echo -e "   ${BOLD}Сборка${NOCL}       : ${GREEN}build <N>${NOCL}, где N - номер стадии сборки"
     echo -e "   ${BOLD}Справка${NOCL}      : ${GREEN}help${NOCL}"

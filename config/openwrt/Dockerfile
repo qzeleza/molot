@@ -54,5 +54,5 @@
     
     USER ${USER_NAME}
     WORKDIR /home/${USER_NAME} 
-    ENV HOME /home/${USER_NAME}
+    ENV HOME=/home/${USER_NAME}
     

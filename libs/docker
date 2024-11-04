@@ -45,20 +45,20 @@ DOCKER_CONTAINER_POSTFIX=builder
 
 # Массив элементов меню для выбора среды разработки
 declare -a ENV_ITEMS
-ENV_ITEMS=(
-	"entware" "Среда Entware"
-	"openwrt" "Среда Openwrt"
-	"padavan" "Среда Podavan"
-)
+# ENV_ITEMS=(
+# 	"entware" "Среда Entware"
+# 	"openwrt" "Среда Openwrt"
+# 	"padavan" "Среда Podavan"
+# )
 
 # Массив элементов меню для выбора архитектуры разработки
 declare -a ARCH_ITEMS
-ARCH_ITEMS=(
+# ARCH_ITEMS=(
 
-	"aarch64" "Процессор aarch64"
-	"mips"    "Процессор mips"
-	"mipsel"  "Процессор mipsel"
-)
+# 	"aarch64" "Процессор aarch64"
+# 	"mips"    "Процессор mips"
+# 	"mipsel"  "Процессор mipsel"
+# )
 
 
 # Функция для поиска всех папок в заданной директории
@@ -396,7 +396,7 @@ is_project_for_building(){
 
 	# Первое нимимальное требование к проекту для сборки
 	# есть ли папка с исходниками под названием src?
-	[ -d "${_project_path}/src" ] || return 1
+	# [ -d "${_project_path}/src" ] || return 1
 
 	# Второе нимимальное требование к проекту для сборки
 	# проверяме наличие в проекте файла манифеста для сборки
