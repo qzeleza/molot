@@ -45,20 +45,15 @@ DOCKER_CONTAINER_POSTFIX=builder
 
 # Массив элементов меню для выбора среды разработки
 declare -a ENV_ITEMS
-# ENV_ITEMS=(
 # 	"entware" "Среда Entware"
 # 	"openwrt" "Среда Openwrt"
 # 	"padavan" "Среда Podavan"
-# )
 
-# Массив элементов меню для выбора архитектуры разработки
 declare -a ARCH_ITEMS
-# ARCH_ITEMS=(
-
 # 	"aarch64" "Процессор aarch64"
 # 	"mips"    "Процессор mips"
 # 	"mipsel"  "Процессор mipsel"
-# )
+
 
 
 # Функция для поиска всех папок в заданной директории
@@ -66,7 +61,7 @@ create_env_items_array() {
 
     local dir_path="$1"
     # Используем declare -n для ссылки на массив
-    declare -n result_array="$2"
+    declare -n result_array=${2}
 
     # Проверяем, указана ли директория
     if [[ -z "$dir_path" ]]; then
@@ -81,7 +76,7 @@ create_env_items_array() {
     fi
 
     # Очищаем массив перед добавлением новых значений
-    local result_array=()
+    # local result_array=()
 	local _text_item=''
     # Используем find для поиска всех директорий
     while IFS= read -r -d '' dir; do
@@ -115,7 +110,7 @@ select_project() {
 									"auto" _projects)
 			# CancelButtonText=''
 			# Проверяем, была ли нажата кнопка выбора
-			is_cancel_pressed "${_sel_project_path}" && exit 1
+			is_cancel_no_pressed "${_sel_project_path}" && exit 1
 			is_esc_pressed "${_sel_project_path}" && exit 1
 
 			# Если нажали на клавишу Новый
@@ -188,7 +183,7 @@ search_project() {
 
     local input=$(show_form "Поиск проекта" "Поиск проекта на диске" "${_data[@]}")
 
-	is_cancel_pressed "${input}" && exit 1
+	is_cancel_no_pressed "${input}" && exit 1
 
     # Обрабатываем ввод пользователя
 	project_name=$(echo "$input" | awk 'NR==1')
@@ -222,7 +217,7 @@ search_project() {
 							 "--no-collapse --cr-wrap --aspect 3" "auto" found_projects)
 
 		# Если не нажаты кнопки выхода
-		if is_esc_pressed "${selected_project}" || is_cancel_pressed "${selected_project}" ; then 
+		if is_esc_pressed "${selected_project}" || is_cancel_no_pressed "${selected_project}" ; then 
 			exit 1
 		else
 
@@ -264,7 +259,7 @@ clone_project() {
 
 	# Проверяем нажатие клавиш выхода
 	is_esc_pressed "${input}" && exit 1
-	is_cancel_pressed "${input}" && exit 1
+	is_cancel_no_pressed "${input}" && exit 1
 
     # Обрабатываем ввод пользователя
 	install_dir=$(echo "$input" | awk 'NR==1')
@@ -332,7 +327,7 @@ choose_build_environment() {
 	
 	# Проверяем нажатие клавиш выхода
 	is_esc_pressed "${_selected_env}" && exit 1
-	is_cancel_pressed "${_selected_env}" && exit 1
+	is_cancel_no_pressed "${_selected_env}" && exit 1
 
 	choose_architecture "${_project_name}" "${_selected_env}"
 }
@@ -364,13 +359,13 @@ choose_architecture() {
 	
 	# Проверяем нажатие клавиш выхода
 	is_esc_pressed "${_selected_arch}" && exit 1
-	is_cancel_pressed "${_selected_arch}" && exit 1
+	is_cancel_no_pressed "${_selected_arch}" && exit 1
 
 	local _app_path=$(get_project_path_by_name "${_project_name}")
 	local _docker_image_name=$(get_docker_image_name "${_env_name}")
 
 	# Под root собирать не рекомендуется - будут ошибки
-	local _user=${USER}; [ ${_user} = root ] && _user=me
+	local _user=${USER}; [ ${_user} = root ] && _user=${USER}
 
 	# Сохраняем полученные данные в файл для передачи внутрь контейнера
 	cat <<-EOF > ${ENV_FILE}
@@ -468,10 +463,16 @@ prepare_menu_enviroment_items(){
 
 	local _status_builded="[образ собран]"			# статус пункта меню, если образ найден
 
-	local _items_width=15 				# общая ширина пунктов меню без ширины строки статуса
+	local _items_width=0 				# общая ширина пунктов меню без ширины строки статуса
 	local _dockerfile_name=''
 	local _status_len=${#_status_builded}
 	
+	# Если нет ни одного контейнера собранного из списка то не добавляем к
+	# их имени пробелов, если они есть, то добавляем
+	for ((i = 0; i < ${#_items[@]}; i+=2)); do
+		sudo docker images | grep -q "$(get_docker_image_name "${_items[i]}")" && _items_width=15
+	done 
+
 	# Проверка на существование докер-образов
 	for ((i = 0; i < ${#_items[@]}; i+=2)); do
 		
@@ -479,7 +480,7 @@ prepare_menu_enviroment_items(){
 
 		if [ -f "${_dockerfile_name}" ] && grep -q 'FROM' "${_dockerfile_name}" ; then
 			_new_items[i]=${_items[i]}
-			if docker images | grep -q "$(get_docker_image_name "${_items[i]}")"; then
+			if sudo docker images | grep -q "$(get_docker_image_name "${_items[i]}")"; then
 			# if [ $(random) = 1 ] ; then # для отладки
 				_new_items[i+1]="$(fill_str "${_items[i+1]}" ${_items_width}) ${_status_builded}"
 			else 
@@ -537,9 +538,9 @@ docker_exec() {
 	#  Входим внутрь уже запущенного докер-контейнера
     local _container_name=${1}
 	
-	docker exec -it "${_container_name}" /bin/bash || {
+	sudo docker exec -it "${_container_name}" /bin/bash || {
 		error "Возникла ошибка при входе в контейнер ${BLUE}${_container_name}${NOCL}"
-		docker logs "${_container_name}"
+		sudo docker logs "${_container_name}"
 		return 1
 	}
 	print_line && return 0
@@ -645,14 +646,14 @@ create_docker_container(){
 	# Файл предназначен для сборки пакета Квас Про в среде разработке под Entware
     molot_path_inside_containter=/home/${USER_NAME}/molot
 
-    docker run -it \
+    sudo docker run -it \
         --mount type=bind,source=${APP_ROOT},target=/home/${USER_NAME}/${APP_NAME} \
         --mount type=bind,source=${ROOT_PATH}/,target=${molot_path_inside_containter}/ \
         --env-file ${ENV_FILE} \
         --entrypoint ${molot_path_inside_containter}/bin/entrypoint \
         --name ${CONTAINER_NAME} ${IMAGE_NAME} || {
             error "Возникла ошибка при запуске контейнера ${BLUE}${CONTAINER_NAME}${NOCL}"
-            docker logs "${CONTAINER_NAME}"
+            sudo docker logs "${CONTAINER_NAME}"
             print_line
             
             YesButtonText=Удалить; NoButtonText="Оставить"
@@ -661,9 +662,9 @@ create_docker_container(){
             answer=$(show_yes_no_dialog "${mess}")
             
             # Если подтвердили удаление
-            if is_cancel_pressed "${answer}" ; then
+            if is_cancel_no_pressed "${answer}" ; then
                 # Переходим к процедуре выбора конфигурации проекта 
-                docker stop ${CONTAINER_NAME} &>/dev/null && docker rm ${CONTAINER_NAME} &>/dev/null
+                sudo docker stop ${CONTAINER_NAME} &>/dev/null && sudo docker rm ${CONTAINER_NAME} &>/dev/null
 		
             fi
             # Восстанавливаем текст кнопки

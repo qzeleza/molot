@@ -40,6 +40,7 @@ RUN \
     libssl-dev \
     libncurses5-dev \
     locales \
+    dialog \
     mc \
     jq \
     pv \

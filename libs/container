@@ -89,7 +89,7 @@ has_access_to_remote_host() {
     local port="$2"
 
     # Проверка доступа по SSH
-	ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$port" "$ssh_login" "exit" &> /dev/null || {
+	sudo ssh -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=5 -p "$port" "$ssh_login" "exit" &> /dev/null|| {
 		return 1
 	}
 	return 0
@@ -113,7 +113,7 @@ copy_ssh_key() {
 			print_line
 			cat < ${HOME}/.ssh/id_rsa.pub
 			print_line
-			sudo ssh-copy-id -p ${_port} -i ${HOME}/.ssh/id_rsa.pub ${_host} || {
+			sudo ssh-copy-id -p ${_port} -i ${HOME}/.ssh/id_rsa.pub -o StrictHostKeyChecking=no ${_host} || {
 				error "Возникла ошибка при передаче публичного ключа на роутер"
 			}
 		}
@@ -135,7 +135,7 @@ get_last_stage() {
 		_start_stage=$(cat < ${BUILDED_STAGES_FILE})
 		[ -z "${_start_stage}" ] && _start_stage=0
 	else
-		touch "${BUILDED_STAGES_FILE}"
+		sudo touch "${BUILDED_STAGES_FILE}"
 		_start_stage=0
 	fi
 
@@ -150,8 +150,8 @@ stage1_clone_github_entware_repo() {
 
 	[ -d ${BUILDING_ENV_PATH} ] && rm -rf ${BUILDING_ENV_PATH}
 	# [ -d ${BUILDING_ENV_PATH} ] && cd ${BUILDING_ENV_PATH} #; make clean || true
-	mkdir -p ${BUILDING_ENV_PATH} && cd ${HOME} &> /dev/null || true
-	git clone ${REPO_URL} ${BUILDING_ENV_PATH} || {
+	sudo mkdir -p ${BUILDING_ENV_PATH} && cd ${HOME} &> /dev/null || true
+	sudo git clone ${REPO_URL} ${BUILDING_ENV_PATH} || {
 		error "[Стадия №1]: Возникла ошибка при клонировании репозитория Entware"
 		return 1
 	}
@@ -170,7 +170,7 @@ stage2_refresh_symlinks() {
 	header "Обновляем ссылки на источники пакетов..."
 
 	# Обновляем ссылки на источники пакетов
-	cd ${BUILDING_ENV_PATH} && git fetch	
+	cd ${BUILDING_ENV_PATH} && sudo git fetch	
 
 	# Собираем пакеты
 	${BUILDING_ENV_PATH}/scripts/feeds update -a || {
@@ -190,10 +190,10 @@ stage2_refresh_symlinks() {
 	header "Обновляем и устанавливаем источник для пакета ${BLUE}${APP_NAME}${NOCL}..."
 
 	{
-		grep -q ${APP_NAME} ${BUILDING_ENV_PATH}/.feeds 2>/dev/null || echo "src-link ${APP_NAME} ${BUILDING_ENV_PATH}/feeds/packages/${APP_NAME}" >> ${BUILDING_ENV_PATH}/.feeds
-		ln -sf ${HOME}/${APP_NAME} ${BUILDING_ENV_PATH}/feeds/packages/
-		${BUILDING_ENV_PATH}/scripts/feeds update packages ${APP_NAME}
-		${BUILDING_ENV_PATH}/scripts/feeds install -a ${APP_NAME}
+		sudo grep -q ${APP_NAME} ${BUILDING_ENV_PATH}/.feeds 2>/dev/null || sudo echo "src-link ${APP_NAME} ${BUILDING_ENV_PATH}/feeds/packages/${APP_NAME}" >> ${BUILDING_ENV_PATH}/.feeds
+		sudo ln -sf ${HOME}/${APP_NAME} ${BUILDING_ENV_PATH}/feeds/packages/
+		sudo ${BUILDING_ENV_PATH}/scripts/feeds update packages ${APP_NAME}
+		sudo ${BUILDING_ENV_PATH}/scripts/feeds install -a ${APP_NAME}
 	} || {
 		error "[Стадия №2]: Возникла ошибка при установке источника для пакета ${BLUE}${APP_NAME}${NOCL}"
 		return 1
@@ -218,17 +218,17 @@ stage3_make_menuconfig() {
 
 	# ln -sf "$HOME/${APP_NAME}" ${BUILDING_ENV_PATH}/package/feeds/packages/
 	# Копируем конфигурацию для заданной архитектуры
-	cp -vf configs/${BUILDING_ARCH}-*.config .config
-	grep -q kvaspro .config || echo "CONFIG_PACKAGE_kvaspro=m" >> .config
+	sudo cp -vf configs/${BUILDING_ARCH}-*.config .config
+	sudo grep -q kvaspro .config || echo "CONFIG_PACKAGE_kvaspro=m" >> .config
 
 	# Собираем конфигурацию
-	make defconfig || {
+	sudo make defconfig || {
 		error "[Стадия №3]: Возникла ошибка при сборке конфигурации"
 		return 1
 	}
 
 	# Фиксируем сборку третьего этапа
-	echo 3 > "${BUILDED_STAGES_FILE}"
+	sudo echo 3 > "${BUILDED_STAGES_FILE}"
 	
 	return 0
 }
@@ -239,9 +239,9 @@ stage4_build_toolchain() {
 	clear && print_line
 	header "Запускаем сборку инструментария ${BLUE}toolchain${NOCL}"
 
-	make -j12 toolchain/install || {
+	sudo make -j12 toolchain/install || {
 		error "[Стадия №4]: Возникла ошибка при сборке ${BLUE}toolchain${NOCL}"
-		make -j1 V=cs toolchain/install 
+		sudo make -j1 V=cs toolchain/install 
 		print_line
 		pause "Для продолжения нажмите клавишу Enter..."
 		return 1
@@ -258,21 +258,26 @@ stage5_build_package() {
 
 	local answer="y"
 	print_line
-	header "Инструментарий ${BLUE}toolchain${NOCL} был собран успешно."
-	read_ynq "Запустить сборку пакета ${APP_NAME}?" answer
-	
+
+	local mess="Инструментарий \Z4toolchain\Zn был собран успешно.\nЗапустить сборку пакета \Z4${APP_NAME}\Zn?"
+	# Выводим диалог с запросом на  поиск
+	local answer=$(show_yes_no_dialog "${mess}")
+
 	# Выходим из скрипта если нажали отмену или нет
-	[[ "${answer}" = [NQ] ]] && return 1
-	[ "${answer}" = Y ] && {
+	is_cancel_no_pressed  "${answer}" && return 1
+	is_esc_pressed 		"${answer}" && return 1
+
+	# Если подтвердили поиск
+	is_ok_yes_pressed "${answer}" && {
 
 		# Пятый этап сборки - сборка пакета
 		clear && print_line
 		header "Запускаем сборку пакета ${BLUE}${APP_NAME}${NOCL}"
 
 		PATH=${BUILDING_ENV_PATH}/build_dir/host/bin:$PATH
-		make -j12 package/${APP_NAME}/{clean,compile} || {
+		sudo make -j12 package/${APP_NAME}/{clean,compile} || {
 			error "[Стадия №5]: Возникла ошибка при сборке пакета ${APP_NAME}"
-			make -j1 V=cs package/${APP_NAME}/compile 
+			sudo make -j1 V=cs package/${APP_NAME}/compile 
 			print_line
 			pause "Для продолжения нажмите клавишу Enter..." 
 			return 1
@@ -294,7 +299,7 @@ stage6_copy_package_to_project_dir() {
 	arch_conf=$(ls configs/aarch* | sed 's|.*/\(.*\)\..*$|\1|')
 
     # Копируем в папку проекта собранный пакет
-    cp ${BUILDING_ENV_PATH}/bin/targets/${arch_conf}/generic-glibc/packages/${APP_NAME}_*.ipk ${HOME}/${APP_NAME}/packages/${BUILDING_ARCH}/ || {
+    sudo cp ${BUILDING_ENV_PATH}/bin/targets/${arch_conf}/generic-glibc/packages/${APP_NAME}_*.ipk ${HOME}/${APP_NAME}/packages/${BUILDING_ARCH}/ || {
 		error "[Стадия №6]: Возникла ошибка при передаче пакета на роутер"
 		return 1
 	}
@@ -313,11 +318,11 @@ stage7_copy_package_to_router() {
 	# Проверяем доступность роутера 
     if is_host_available "${ROUTER_SSH}" ; then
         message "Роутер доступен, передаем пакет на роутер..."
-		ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "[ -d /opt/packages ] || mkdir -p /opt/packages/" &> /dev/null || {
+		sudo ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "[ -d /opt/packages ] || mkdir -p /opt/packages/" &> /dev/null || {
 			error "[Стадия №7]: Возникла ошибка при создании директории /opt/packages на роутере"
             return 1
 		}
-        scp -OP ${ROUTER_PORT} "${HOME}/${APP_NAME}/packages/${BUILDING_ARCH}/${APP_NAME}_*.ipk" ${ROUTER_SSH}:/opt/packages/ || {
+        sudo scp -OP ${ROUTER_PORT} "${HOME}/${APP_NAME}/packages/${BUILDING_ARCH}/${APP_NAME}_*.ipk" ${ROUTER_SSH}:/opt/packages/ || {
             error "[Стадия №7]: Возникла ошибка при передаче пакета на роутер"
             return 1
         }
@@ -337,16 +342,16 @@ stage8_install_and_start_package_on_router() {
 	clear && print_line
 	header "Выполняем установку пакета и запуск на роутере..."
 
-	ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "[ -f /opt/packages/${APP_NAME}_*.ipk ] && rm -f /opt/packages/${APP_NAME}_*.ipk && \
+	sudo ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "[ -f /opt/packages/${APP_NAME}_*.ipk ] && rm -f /opt/packages/${APP_NAME}_*.ipk && \
 		opkg remove ${APP_NAME} && opkg install /opt/packages/${APP_NAME}_*.ipk" || {
 		error "[Стадия №8]: Возникла ошибка при установке пакета на роутер ${BLUE}${ROUTER_SSH}${NOCL}"
 			return 1
 		}
-	ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "/opt/sbin/${APP_NAME}" || {
+	sudo ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "/opt/sbin/${APP_NAME}" || {
 		error "[Стадия №8]: Возникла ошибка при запуске приложения на роутер ${BLUE}${ROUTER_SSH}${NOCL}"
 		return 1
 		}
-	ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "/opt/sbin/test_${APP_NAME}" || {
+	sudo ssh -p ${ROUTER_PORT} ${ROUTER_SSH} "/opt/sbin/test_${APP_NAME}" || {
 		error "[Стадия №8]: Возникла ошибка при запуске приложения на роутер ${BLUE}${ROUTER_SSH}${NOCL}"
 		return 1
 	}
@@ -356,21 +361,24 @@ stage8_install_and_start_package_on_router() {
 
 
 hello() {
-	pause "Для продолжения нажмите клавишу Enter..."
+	# pause "Для продолжения нажмите клавишу Enter..."
     clear
     print_line
     echo
     echo -e "   🐳 Сейчас мы находимся внутри контейнера"
     echo
-    echo -e "   ${BOLD}Платформа{NOCL} : ${BLUE}${BUILDING_ENV}${NOCL}"
+	print_line
+	echo 
+    echo -e "   ${BOLD}Платформа${NOCL}    : ${BLUE}${BUILDING_ENV}${NOCL}"
     echo -e "   ${BOLD}Архитектура${NOCL}  : ${BLUE}${BUILDING_ARCH}${NOCL}"
 	echo
     echo -e "   ${BOLD}Пользователь${NOCL} : ${BLUE}${USER_NAME}${NOCL}"
     echo -e "   ${BOLD}Приложение${NOCL}   : ${BLUE}${APP_NAME}${NOCL}"
 	echo
     echo -e
-	echo -e "   ${BOLD}Сборка${NOCL}       : ${GREEN}build <N>${NOCL}, где N - номер стадии сборки"
-    echo -e "   ${BOLD}Справка${NOCL}      : ${GREEN}help${NOCL}"
+    echo -e "   ${BOLD}Меню команд${NOCL}  : ${GREEN}cmenu${NOCL}"
+	echo -e "   ${BOLD}Меню этапов${NOCL}  : ${GREEN}smenu${NOCL}"
+	echo -e "   ${BOLD}Справка${NOCL}      : ${GREEN}help${NOCL}"
     echo -e "   ${BOLD}Выход${NOCL}        : ${GREEN}exit${NOCL}"
     echo
     print_line
@@ -385,7 +393,7 @@ set_bashrc_profile(){
 
 	(
         # устанавливаем строку приглашения
-        printf "\n\nPS1=\"\n🐳 \w ✪❯ \"\n" 
+        printf "\n\nPS1=\"\n🐳 \w \n✪❯ \"\n" 
 
         printf 'export TERM=xterm-256color\n'
 		printf 'export EDITOR="/usr/bin/nano"\n'
@@ -399,7 +407,21 @@ set_bashrc_profile(){
         printf "alias ll='ls $LS_OPTIONS -lai'\n";
         printf "alias l='ls $LS_OPTIONS -lA'\n";
         printf "alias nano='nano +999999 -l'\n";
-		printf "alias build='${HOME}/molot/bin/builder'$@\n";
+		printf "source ${HOME}/molot/libs/container\n"
+		printf "alias cmenu='select_command_action\n";
+		printf "alias smenu='select_stage_action\n";
+
+		# printf "cmenu() {\n"
+		# printf '    \n'
+		# printf "	[ -v ACTION_CMD_MENU ] || source ${HOME}/molot/config/${BUILDING_ENV}/config\n"
+		# printf "	select_command_action\n"
+		# printf "}\n"
+
+		# printf "smenu() {\n"
+		# printf '    \n'
+		# printf "	[ -v BUILDING_STAGES ] || source ${HOME}/molot/config/${BUILDING_ENV}/config\n"
+		# printf "	select_stage_action\n"
+		# printf "}\n"
 
 		printf "help() {\n"
 		printf '    \n'
@@ -426,3 +448,34 @@ set_bashrc_profile(){
 }
 
 
+select_command_action(){
+	
+	# Создаем меню выбора для выполенния команд в терминате
+	# чтобы их не набирать вручную
+
+	[ -v ACTION_CMD_MENU ] || source ${HOME}/molot/config/${BUILDING_ENV}/config
+
+	choice=$(show_menu "Создание нового проекта" \
+				"Меню выбора " \
+				"\n Выберите дальнейшее действие" \
+				"--no-collapse --no-tags --cr-wrap --aspect 3" "auto" ACTION_CMD_MENU) 
+
+	${choice}
+
+}
+
+select_stage_action(){
+	
+	# Создаем меню выбора для выполенния команд в терминате
+	# чтобы их не набирать вручную
+
+	[ -v BUILDING_STAGES ] || source ${HOME}/molot/config/${BUILDING_ENV}/config
+
+	choice=$(show_menu "Создание нового проекта" \
+				"Меню выбора " \
+				"\n Выберите дальнейшее действие" \
+				"--no-collapse --no-tags --cr-wrap --aspect 3" "auto" BUILDING_STAGES) 
+
+	sudo ${HOME}/molot/bin/builder "${choice}"
+
+}

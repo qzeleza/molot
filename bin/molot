@@ -37,11 +37,14 @@ source ${ROOT_PATH}/libs/docker
 # в папке конфигурации и формируем ENV_ITEMS
 create_env_items_array "${IMAGES_CONFIG_PATH}" ENV_ITEMS
 
+# exit 
 _arg1_command=${1}
 _arg2_app_name=${2}
 _arg3_env_name=${3}
 _arg4_arch_name=${4}
 
+# Если нет dialog устанавливаем его
+available "dialog" || apt install -y dialog &>/dev/null
 
 # Обрабатываем входящие аргументы 
 case "${_arg1_command}" in
@@ -147,10 +150,11 @@ if [[ -f "${ENV_FILE}" && -s "${ENV_FILE}" ]] ; then
     mess=$(cat <<-EOF
         Найдена ранее сохраненная кофигурация
 
-        Проект       : \Z4${APP_NAME}\Zn
-        Папка        : \Z4${APP_ROOT}\Zn
         Среда сборки : \Z4${BUILDING_ENV}\Zn
         Архитектура  : \Z4${BUILDING_ARCH}\Zn
+
+        Проект       : \Z4${APP_NAME}\Zn
+        Папка        : \Z4${APP_ROOT}\Zn
 
         \Z1Продолжить с данной конфигурацией?\Zn
 EOF
@@ -160,7 +164,7 @@ EOF
 	answer=$(show_yes_no_dialog "${mess}")
     
 	# Если подтвердили удаление
-	if is_cancel_pressed "${answer}" ; then
+	if is_cancel_no_pressed "${answer}" ; then
         # Переходим к процедуре выбора конфигурации проекта 
         select_project
     fi
@@ -181,7 +185,7 @@ clear
 # clear && print_line
 
 # Если нет собранного Docker образа - собираем его
-docker image ls | grep -q "${IMAGE_NAME}" || {
+sudo docker image ls | grep -q "${IMAGE_NAME}" || {
     clear 
     print_line
     echo 
@@ -190,6 +194,7 @@ docker image ls | grep -q "${IMAGE_NAME}" || {
     message " Приложение     : ${BLUE}${APP_NAME}${NOCL}"
     message " Среда сборки   : ${BLUE}${BUILDING_ENV}${NOCL}"
     message " Архитектура    : ${BLUE}${BUILDING_ARCH}${NOCL}"
+    echo 
     message " Имя образа     : ${BLUE}${IMAGE_NAME}${NOCL}"
     message " Имя контейнера : ${BLUE}${CONTAINER_NAME}${NOCL}"
     echo
@@ -198,7 +203,7 @@ docker image ls | grep -q "${IMAGE_NAME}" || {
     warning " Сборка может занять от 20 минут и больше..."
     print_line
 
-    docker build -f $(get_dockerfile_name ${BUILDING_ENV}) --build-arg USER_NAME=${USER_NAME} --pull --tag ${IMAGE_NAME} . || {
+    sudo docker build -f $(get_dockerfile_name ${BUILDING_ENV}) --build-arg USER_NAME=${USER_NAME} --pull --tag ${IMAGE_NAME} . || {
         error "Возникла ошибка при сборке образа ${BLUE}${IMAGE_NAME}${NOCL}."
         exit 1
     }
@@ -207,13 +212,13 @@ docker image ls | grep -q "${IMAGE_NAME}" || {
 
 # Проверяем наличие контейнера и его статус для рекущей архитектуры ядра
 # Проверяем существует ли докер-контейнер
-if docker ps -a | grep -q "${CONTAINER_NAME}" ; then 
+if sudo docker ps -a | grep -q "${CONTAINER_NAME}" ; then 
     
     # Если контейнер до сих пор в статусе Created - удаляем его
-    docker ps -a | grep -q "${CONTAINER_NAME}" | grep -q "Created" && docker rm -f ${CONTAINER_NAME} &>/dev/null
+    sudo docker ps -a | grep -q "${CONTAINER_NAME}" | grep -q "Created" && docker rm -f ${CONTAINER_NAME} &>/dev/null
     
     # Проверяем запущен ли докер-контейнер
-    if docker ps | grep -q "${CONTAINER_NAME}" ; then 
+    if sudo docker ps | grep -q "${CONTAINER_NAME}" ; then 
         warning "Контейнер ${BLUE}${CONTAINER_NAME}${NOCL} уже запущен"
         message "Заходим внутрь контейнера..."
 
@@ -221,7 +226,7 @@ if docker ps -a | grep -q "${CONTAINER_NAME}" ; then
         # ...если нет, то заходим внутрь его
         docker_exec ${CONTAINER_NAME} || {
             error "Возникла ошибка при входе в контейнер ${BLUE}${CONTAINER_NAME}${NOCL}."
-            docker logs "${CONTAINER_NAME}"
+            sudo docker logs "${CONTAINER_NAME}"
             print_line
             exit 1
         }
@@ -231,20 +236,20 @@ if docker ps -a | grep -q "${CONTAINER_NAME}" ; then
         print_line
 
         # ...если нет, то запускаем его
-        if docker start ${CONTAINER_NAME} &>/dev/null ; then
+        if sudo docker start ${CONTAINER_NAME} &>/dev/null ; then
             # ...и затем заходим внутрь его
             message "Заходим внутрь контейнера..."
             print_line
             
             docker_exec ${CONTAINER_NAME} || {
                 error "Возникла ошибка при входе в контейнер ${BLUE}${CONTAINER_NAME}${NOCL}."
-                docker logs "${CONTAINER_NAME}"
+                sudo docker logs "${CONTAINER_NAME}"
                 print_line
                 exit 1
             }
         else 
             error "Возникла ошибка при старте контейнера ${BLUE}${CONTAINER_NAME}${NOCL}."
-            docker logs "${CONTAINER_NAME}"
+            sudo docker logs "${CONTAINER_NAME}"
             print_line
             exit 1
         fi

@@ -34,7 +34,9 @@ commands_to_check=(
     "docker" "sudo curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh && sudo chmod 666 /var/run/docker.sock" 
     "git"    "apt"
     "scp"    "apt"
+    "dialog" "apt"
 )  
+
 # Проверяем и устанавливаем недостающие пакеты
 install_missing_packages commands_to_check || {
     error "Были установлены не все необходимые."

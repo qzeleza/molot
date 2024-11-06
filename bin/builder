@@ -22,8 +22,8 @@
 #----------------------------------------------------------------------------------
 
 # Включам редим вывода отладочных сообщений
-# set -x
-clear
+# set -xe
+# clear
 
 # Подключаем конфигурацию под конкретную среду сборки
 # Подключать нужно перед библиотекой molot/libs/container
@@ -31,6 +31,7 @@ source ${HOME}/molot/config/${BUILDING_ENV}/config
 
 # Подключаем библиотеки общих функций
 source ${HOME}/molot/libs/general
+source ${HOME}/molot/libs/dialogs
 source ${HOME}/molot/libs/container
 
 # Очистка экрана
@@ -58,23 +59,37 @@ case "${_stage}" in
         # В нем записан номер последней выполненной стадии
         _start_stage=$(get_last_stage)
         
-        [ "${_start_stage}" -ge 1 ] && {
-            print_line
-            warning "Найдены данные от предыдущей сборки..."
-            read_ynq "Удалить их и начать сборку заново?" answer
+        mess="Продолжить сборку или выйти в Терминал?"
+        YesButtonText="Продолжить"; NoButtonText="Терминал"
+        answer=$(show_yes_no_dialog "${mess}")
+        YesButtonText="Да"; NoButtonText="Нет"
 
-            [ "${answer}" = Y ] && _start_stage=0
+        # Если выбран терминал, то выходим из case
+        is_ok_yes_pressed "${answer}" && {
+            
+            [ "${_start_stage}" -ge 1 ] && {
+                print_line
+                mess="Найдены данные от предыдущей сборки...\nУдалить их и начать сборку заново?"
+                # Выводим диалог с запросом на  поиск
+                answer=$(show_yes_no_dialog "${mess}")
+                
+                # Если подтвердили поиск
+                is_ok_yes_pressed "${answer}" && {
+                    _start_stage=0
+                    clear    
+                }
+            }
+
+            [ "${_start_stage}" -eq 0 ] && {
+                print_line
+                header "Процесс предварительной сборки инструментария запущен с \"нуля\""  
+                # Даем права на директорию
+                sudo chown -R ${USER_NAME}:${USER_NAME} "$HOME/${APP_NAME}" 
+            }
+
+            # Без аргументов: выполняем отмеченные стадии
+            [ "${answer}" = Q ] || run_stages "${_start_stage}" "${TOTAL_STAGES}" 
         }
-
-        [ "${_start_stage}" -eq 0 ] && {
-            print_line
-            header "Процесс предварительной сборки инструментария запущен с \"нуля\""  
-            # Даем права на директорию
-            sudo chown -R ${USER_NAME}:${USER_NAME} "$HOME/${APP_NAME}" 
-        }
-
-        # Без аргументов: выполняем отмеченные стадии
-        [ "${answer}" = Q ] || run_stages "${_start_stage}" "${TOTAL_STAGES}" 
         ;;
 
     [1-"${TOTAL_STAGES}"])
@@ -100,4 +115,4 @@ case "${_stage}" in
         ;;
 esac
 
-hello
+cd ${BUILDING_ENV_PATH} && hello

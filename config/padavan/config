@@ -1,2 +1,31 @@
 REPO_URL=https://bitbucket.org/padavan/rt-n56u.git
 PROCS=(aarch64 mips mipsel)
+
+BUILDING_STAGES=(
+    1 "Клонировать среду разработки Entware из репозитория"
+    2 "Обновить ссылки на источники пакетов"
+    3 "Создать файл конфигурации под ${BLUE}${BUILDING_ARCH}${NOCL}"
+    4 "Собрать инструментарий ${BLUE}toolchain${NOCL}"
+    5 "Собрать пакет ${BLUE}${APP_NAME}${NOCL}"
+    6 "Скопировать собранный ipk пакет в папку проекта"
+    7 "Скопировать собранный ipk на удаленный роутер"
+    8 "Выполнить установку пакета и запуск на роутере"
+    9 "Выполнить тесты на роутере"
+)
+
+ACTION_CMD_MENU=(
+    "sudo scripts/feeds update -a"                   "scripts/feeds update -a"
+    "sudo scripts/feeds install -a"                  "scripts/feeds install -a"
+    "sudo echo 'src-link ${APP_NAME} ${BUILDING_ENV_PATH}/feeds/packages/${APP_NAME}' >> feeds.conf" "echo 'src-link ${APP_NAME} ${BUILDING_ENV_PATH}/feeds/packages/${APP_NAME}' >> feeds.conf"
+    "sudo scripts/feeds update ${APP_NAME}"  "scripts/feeds update ${APP_NAME}"
+    "sudo make clean"                                "make clean"
+    "sudo make dirclean"                             "make dirclean"
+    "sudo make distclean"                           "make distrclean"
+    "sudo cp -vf configs/${BUILDING_ARCH}-*.config .config " "cp -vf configs/${BUILDING_ARCH}-*.config .config "
+    "sudo make defconfig"                            "make defconfig"
+    "sudo make menuconfig"                           "make menuconfig"
+    "sudo make -j12 toolchain/install"               "make -j12 toolchain/install"
+    "sudo make -j1 V=cs toolchain/install"           "make -j1 V=cs toolchain/install"
+    "sudo make -j12 package/${APP_NAME}/compile"     "make -j12 package/${APP_NAME}/compile"
+    "sudo make -j1 V=cs package/${APP_NAME}/compile" "make -j1 V=cs package/${APP_NAME}/compile"
+)

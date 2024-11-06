@@ -17,6 +17,7 @@ RUN apt-get install --no-install-recommends --no-install-suggests --yes \
 	autoconf \
 	autopoint \
 	libtool \
+	dialog \
 	bison \
 	flex \
 	zlib1g-dev \
